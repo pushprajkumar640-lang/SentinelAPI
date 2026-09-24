@@ -1,0 +1,7 @@
+{
+  "name": "SENTINELAPI - Defensive API Security Scanner",
+  "description": "Defensive API security scanner and vulnerability assessment platform for authorized sandboxed test APIs, detecting BOLA/IDOR, data exposure, and rate-limiting flaws.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

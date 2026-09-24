@@ -1,0 +1,61 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Projects Collection
+    match /projects/{projectId} {
+      allow create: if isAuthenticated() && (request.resource.data.ownerId == request.auth.uid || request.resource.data.userId == request.auth.uid);
+      allow read, update, delete: if isAuthenticated() && (resource.data.ownerId == request.auth.uid || resource.data.userId == request.auth.uid);
+    }
+
+    // API Specifications Collection
+    match /apiSpecifications/{specId} {
+      allow create: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || request.resource.data.ownerId == request.auth.uid);
+      allow read, update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || resource.data.ownerId == request.auth.uid);
+    }
+
+    // Endpoints Collection
+    match /endpoints/{endpointId} {
+      allow create: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || request.resource.data.ownerId == request.auth.uid);
+      allow read, update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || resource.data.ownerId == request.auth.uid);
+    }
+
+    // Scans Collection
+    match /scans/{scanId} {
+      allow create: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || request.resource.data.ownerId == request.auth.uid);
+      allow read, update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || resource.data.ownerId == request.auth.uid);
+    }
+
+    // Vulnerabilities Collection
+    match /vulnerabilities/{vulnId} {
+      allow create: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || request.resource.data.ownerId == request.auth.uid);
+      allow read, update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || resource.data.ownerId == request.auth.uid);
+    }
+
+    // Scan Requests Collection
+    match /scanRequests/{requestId} {
+      allow create: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || request.resource.data.ownerId == request.auth.uid);
+      allow read, update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || resource.data.ownerId == request.auth.uid);
+    }
+
+    // Reports Collection
+    match /reports/{reportId} {
+      allow create: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || request.resource.data.ownerId == request.auth.uid);
+      allow read, update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || resource.data.ownerId == request.auth.uid);
+    }
+  }
+}
