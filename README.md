@@ -1,39 +1,79 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# 🛡️ SentinelAPI
 
-# Run and deploy your AI Studio app
+### Defensive API Security Scanner
 
-This contains everything you need to run your app locally.
+SentinelAPI is a modern defensive API security platform designed to help developers and security teams discover API endpoints, analyze security risks, perform authorized security scans, and generate actionable security reports.
 
-View your app in AI Studio: https://ai.studio/apps/1dd47d85-ff9d-437e-a2be-a25e75e61724
+> ⚠️ SentinelAPI is designed for **authorized defensive security testing only**. Only scan APIs and systems that you own or have explicit permission to test.
 
-## Run Locally
+---
 
-**Prerequisites:**  Node.js
+## 🚀 Features
 
+### 🔐 Authentication
+- Secure user authentication
+- User-specific projects
+- Sign In / Sign Up
+- Session persistence
+- Protected project data
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+### 📁 Security Projects
+Create and manage multiple API security projects.
 
-## Running without an external database
+Each project maintains its own:
 
-The app no longer requires a PostgreSQL server to start. If `SQL_HOST` is not
-set, it automatically uses an embedded PostgreSQL database (PGlite) created
-from `drizzle/*.sql`, stored in `node_modules/.cache/sentinel-pglite`
-(override with `PGLITE_DATA_DIR`).
+- API endpoints
+- Vulnerabilities
+- Scan history
+- Security findings
+- Reports
+- Security score
 
-To use a real PostgreSQL / Cloud SQL instance instead, copy `.env.example` to
-`.env` and fill in `SQL_HOST`, `SQL_USER`, `SQL_PASSWORD` and `SQL_DB_NAME`,
-then run `npm run db:push`.
+Project data is isolated so data from one project does not appear in another.
 
-`GEMINI_API_KEY` is optional: without it the app works normally and only the
-AI Copilot stays disabled. Firebase auth config lives in
-`firebase-applet-config.json`.
+### 🔎 API Discovery
+Discover and organize API endpoints from authorized API specifications and environments.
 
-Scripts: `npm run dev`, `npm run build`, `npm start`, `npm test`,
-`npm run db:generate`, `npm run db:push`.
-"# SentinelAPI" 
+### 🛡️ Vulnerability Detection
+Identify common API security issues and organize findings by severity.
+
+### 📊 Security Score
+Get a security score based on detected findings and project security status.
+
+### 🧪 Defensive Scanning
+Run security tests against authorized staging or test environments.
+
+### 📑 Security Reports
+Generate structured reports containing:
+
+- Security findings
+- Vulnerability severity
+- Affected endpoints
+- Scan information
+- Recommended remediation
+
+### 🕘 Scan History
+Track previous security scans and their results.
+
+### 🤖 AI Copilot
+Use AI-assisted analysis to understand security findings and remediation recommendations.
+
+### 🧰 Demo Sandbox
+SentinelAPI includes an intentionally vulnerable demo environment for safe security testing and learning.
+
+---
+
+## 🖥️ Dashboard
+
+The SentinelAPI dashboard provides a centralized security workspace:
+
+```text
+Projects
+   │
+   ├── Dashboard
+   ├── Scan API
+   ├── Endpoints
+   ├── Vulnerabilities
+   ├── Reports
+   ├── Scan History
+   └── Settings
