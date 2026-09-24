@@ -8,8 +8,41 @@ import {
   reports,
   notifications
 } from './schema';
-import { eq, desc, and } from 'drizzle-orm';
+import { eq, desc, and, avg, count, sql } from 'drizzle-orm';
 import { ApiEndpoint, VulnerabilityFinding, SecurityScoreBreakdown } from '../types/security';
+
+export async function getDashboardSummary(userId: number) {
+  const [scanSummary, findingSummary] = await Promise.all([
+    db
+      .select({
+        scansCount: count(scans.id),
+        averageScore: avg(scans.securityScore)
+      })
+      .from(scans)
+      .where(and(eq(scans.userId, userId), eq(scans.status, 'COMPLETED'))),
+    db
+      .select({
+        vulnerabilitiesCount: count(vulnerabilities.id),
+        criticalCount: sql<number>`count(*) filter (where ${vulnerabilities.severity} = 'CRITICAL')`,
+        highCount: sql<number>`count(*) filter (where ${vulnerabilities.severity} = 'HIGH')`,
+        mediumCount: sql<number>`count(*) filter (where ${vulnerabilities.severity} = 'MEDIUM')`,
+        lowCount: sql<number>`count(*) filter (where ${vulnerabilities.severity} = 'LOW')`
+      })
+      .from(vulnerabilities)
+      .innerJoin(projects, eq(vulnerabilities.projectId, projects.id))
+      .where(eq(projects.userId, userId))
+  ]);
+
+  return {
+    scansCount: Number(scanSummary[0]?.scansCount || 0),
+    averageScore: Math.round(Number(scanSummary[0]?.averageScore || 0)),
+    vulnerabilitiesCount: Number(findingSummary[0]?.vulnerabilitiesCount || 0),
+    criticalCount: Number(findingSummary[0]?.criticalCount || 0),
+    highCount: Number(findingSummary[0]?.highCount || 0),
+    mediumCount: Number(findingSummary[0]?.mediumCount || 0),
+    lowCount: Number(findingSummary[0]?.lowCount || 0)
+  };
+}
 
 export async function getUserProjects(userId: number) {
   try {

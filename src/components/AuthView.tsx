@@ -12,9 +12,14 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
-export const AuthView: React.FC = () => {
+interface AuthViewProps {
+  initialMode?: 'signin' | 'signup';
+  onClose?: () => void;
+}
+
+export const AuthView: React.FC<AuthViewProps> = ({ initialMode = 'signin', onClose }) => {
   const { signIn, signUp } = useAuth();
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [mode, setMode] = useState<'signin' | 'signup'>(initialMode);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -37,8 +42,9 @@ export const AuthView: React.FC = () => {
   };
 
   return (
-    <main className="auth-shell cyber-grid">
+    <main className={onClose ? 'auth-shell auth-shell--modal cyber-grid' : 'auth-shell cyber-grid'}>
       <div className="auth-shell__wash" />
+      {onClose && <button type="button" className="auth-modal-close" onClick={onClose} aria-label="Close authentication">×</button>}
       <div className="auth-layout">
         <section className="auth-hero">
           <div className="brand-lockup">

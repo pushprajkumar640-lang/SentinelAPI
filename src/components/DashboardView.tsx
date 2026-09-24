@@ -32,6 +32,17 @@ interface DashboardViewProps {
   projectName?: string;
   onSelectFinding: (finding: VulnerabilityFinding) => void;
   onNavigateTab: (tab: 'scan' | 'vulnerabilities' | 'endpoints' | 'reports') => void;
+  dashboardSummary?: {
+    scansCount: number;
+    averageScore: number;
+    vulnerabilitiesCount: number;
+    criticalCount: number;
+    highCount: number;
+    mediumCount: number;
+    lowCount: number;
+  } | null;
+  dashboardLoading?: boolean;
+  dashboardError?: string | null;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -42,11 +53,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   projectName = 'Authorized Project',
   onSelectFinding,
   onNavigateTab
+  , dashboardSummary
+  , dashboardLoading = false
+  , dashboardError = null
 }) => {
   const criticalCount = findings.filter((f) => f.severity === 'CRITICAL').length;
   const highCount = findings.filter((f) => f.severity === 'HIGH').length;
   const mediumCount = findings.filter((f) => f.severity === 'MEDIUM').length;
   const lowCount = findings.filter((f) => f.severity === 'LOW').length;
+  const displayedCriticalCount = dashboardSummary?.criticalCount ?? criticalCount;
+  const displayedHighCount = dashboardSummary?.highCount ?? highCount;
 
   const chartData = [
     { name: 'Critical', count: criticalCount, color: '#ef4444' },
@@ -57,6 +73,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   return (
     <div className="space-y-6">
+      {dashboardLoading && <div className="rounded-lg border border-slate-800 bg-slate-900/50 px-4 py-3 text-xs font-mono text-slate-400">Loading dashboard...</div>}
+      {dashboardError && <div className="rounded-lg border border-red-500/30 bg-red-950/20 px-4 py-3 text-xs text-red-300">Unable to load dashboard data</div>}
       {/* Top 4 Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Security Score */}
@@ -141,13 +159,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-extrabold font-mono text-red-400">
-              {hasScanned ? criticalCount : 0}
+              {hasScanned ? displayedCriticalCount : 0}
             </span>
             <span className="text-xs font-mono text-slate-400">active exploit paths</span>
           </div>
           <p className="mt-2 text-[11px] text-slate-400">
             {hasScanned
-              ? criticalCount > 0
+              ? displayedCriticalCount > 0
                 ? 'Immediate remediation required'
                 : 'No critical BOLA flaws detected'
               : 'Evaluated upon scan execution'}
@@ -162,13 +180,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-extrabold font-mono text-orange-400">
-              {hasScanned ? highCount : 0}
+              {hasScanned ? displayedHighCount : 0}
             </span>
             <span className="text-xs font-mono text-slate-400">flaws detected</span>
           </div>
           <p className="mt-2 text-[11px] text-slate-400">
             {hasScanned
-              ? highCount > 0
+              ? displayedHighCount > 0
                 ? 'Excessive Data Exposure & Missing Auth'
                 : 'No high severity findings'
               : 'Evaluated upon scan execution'}

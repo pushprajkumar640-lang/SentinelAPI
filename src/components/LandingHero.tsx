@@ -87,22 +87,22 @@ export const LandingHero: React.FC<LandingHeroProps> = ({
             </div>
           </div>
 
-          {/* Quick Statistics Strip */}
+          {/* Empty account statistics until a user has completed a scan */}
           <div className="w-full grid grid-cols-2 gap-2 text-center">
             <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-2.5">
-              <div className="text-xl font-bold font-mono text-white">148</div>
+              <div className="text-xl font-bold font-mono text-white">0</div>
               <div className="text-[11px] text-slate-400">APIs Scanned</div>
             </div>
             <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-2.5">
-              <div className="text-xl font-bold font-mono text-emerald-400">392</div>
+              <div className="text-xl font-bold font-mono text-emerald-400">0</div>
               <div className="text-[11px] text-slate-400">Vulns Detected</div>
             </div>
             <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-2.5">
-              <div className="text-xl font-bold font-mono text-red-400">41</div>
+              <div className="text-xl font-bold font-mono text-red-400">0</div>
               <div className="text-[11px] text-slate-400">Critical BOLA</div>
             </div>
             <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-2.5">
-              <div className="text-xl font-bold font-mono text-cyan-400">74%</div>
+              <div className="text-xl font-bold font-mono text-cyan-400">0%</div>
               <div className="text-[11px] text-slate-400">Avg Score</div>
             </div>
           </div>

@@ -35,6 +35,7 @@ import {
   updateVulnerabilityStatus,
   saveReport,
   getProjectReports
+  , getDashboardSummary
 } from '../db/projectService';
 import { RAW_FOOD_DELIVERY_JSON } from '../data/foodDeliverySpec';
 import { isExternalPostgresConfigured, verifyDatabase } from '../db';
@@ -170,6 +171,17 @@ export function createApiRouter(): Router {
   });
 
   router.use(requireAuth);
+
+  router.get('/dashboard/summary', async (req: AuthRequest, res: Response) => {
+    try {
+      const user = await resolveUser(req);
+      const summary = await getDashboardSummary(user.id);
+      return res.json({ summary });
+    } catch (err) {
+      console.error('Error fetching dashboard summary:', err instanceof Error ? err.message : 'unknown error');
+      return res.status(500).json({ error: 'Unable to load dashboard data' });
+    }
+  });
 
   // Get user projects
   router.get('/projects', async (req: AuthRequest, res: Response) => {

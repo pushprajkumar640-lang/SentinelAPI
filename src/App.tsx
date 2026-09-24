@@ -19,6 +19,7 @@ import { AiAssistantDrawer } from './components/AiAssistantDrawer';
 import { ProjectsListView, ProjectCardData } from './components/ProjectsListView';
 import { NewProjectModal } from './components/NewProjectModal';
 import { AuthView } from './components/AuthView';
+import { PublicLanding } from './components/PublicLanding';
 import { useAuth } from './context/AuthContext';
 import { apiFetch } from './lib/api';
 import {
@@ -48,6 +49,8 @@ const DEFAULT_EMPTY_SCORE: SecurityScoreBreakdown = {
 
 export default function App() {
   const { user, loading: authLoading, getToken } = useAuth();
+  const [authMode, setAuthMode] = useState<'signin' | 'signup' | null>(null);
+  const [showPublicDashboard, setShowPublicDashboard] = useState(false);
 
   // Projects state
   const [projects, setProjects] = useState<ProjectCardData[]>([]);
@@ -69,6 +72,17 @@ export default function App() {
   const [isAiAssistantOpen, setIsAiAssistantOpen] = useState<boolean>(false);
   const [activeAiFinding, setActiveAiFinding] = useState<VulnerabilityFinding | null>(null);
   const [isScanning, setIsScanning] = useState<boolean>(false);
+  const [dashboardSummary, setDashboardSummary] = useState<{
+    scansCount: number;
+    averageScore: number;
+    vulnerabilitiesCount: number;
+    criticalCount: number;
+    highCount: number;
+    mediumCount: number;
+    lowCount: number;
+  } | null>(null);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
 
   // Recalculate score from actual findings
   const recalculateScore = (activeFindings: VulnerabilityFinding[], totalEps: number) => {
@@ -119,6 +133,21 @@ export default function App() {
       const token = await getToken();
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
+      setDashboardLoading(true);
+      setDashboardError(null);
+      try {
+        const summaryRes = await apiFetch('/api/dashboard/summary', { headers });
+        if (summaryRes.ok) {
+          const summaryData = await summaryRes.json();
+          setDashboardSummary(summaryData.summary || null);
+        } else {
+          setDashboardError('Unable to load dashboard data');
+        }
+      } catch {
+        setDashboardError('Unable to load dashboard data');
+      } finally {
+        setDashboardLoading(false);
+      }
 
       let backendProjects: ProjectCardData[] = [];
       try {
@@ -147,8 +176,15 @@ export default function App() {
   }, [getToken, user, activeProject]);
 
   useEffect(() => {
-    fetchProjects();
-  }, [user]);
+    if (user) fetchProjects();
+    else {
+      setProjects([]);
+      setLoadingProjects(false);
+      setDashboardSummary(null);
+      setDashboardError(null);
+      setDashboardLoading(false);
+    }
+  }, [user, fetchProjects]);
 
   // Helper to ensure all findings have strictly unique IDs
   const ensureUniqueFindings = (items: VulnerabilityFinding[]): VulnerabilityFinding[] => {
@@ -385,7 +421,38 @@ export default function App() {
     return <div className="min-h-screen bg-[#06080c] flex items-center justify-center text-xs font-mono text-emerald-400">Restoring secure session...</div>;
   }
 
-  if (!user) return <AuthView />;
+  if (!user) {
+    if (showPublicDashboard) {
+      return (
+        <main className="min-h-screen overflow-y-auto bg-gradient-to-b from-[#06080c] to-[#080b11] p-4 text-slate-100 sm:p-6 lg:p-8">
+          <div className="mx-auto max-w-6xl">
+            <button type="button" onClick={() => setShowPublicDashboard(false)} className="mb-6 text-xs font-mono text-slate-400 transition-colors hover:text-emerald-300">&larr; Back to SentinelAPI</button>
+            <DashboardView
+              score={DEFAULT_EMPTY_SCORE}
+              findings={[]}
+              totalEndpoints={0}
+              hasScanned={false}
+              projectName="SentinelAPI Workspace"
+              onSelectFinding={() => {}}
+              onNavigateTab={() => {}}
+            />
+          </div>
+        </main>
+      );
+    }
+    return (
+      <>
+        <PublicLanding onOpenAuth={setAuthMode} onOpenDashboard={() => setShowPublicDashboard(true)} />
+        {authMode && (
+          <AuthView
+            key={authMode}
+            initialMode={authMode}
+            onClose={() => setAuthMode(null)}
+          />
+        )}
+      </>
+    );
+  }
 
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-[#06080c] text-slate-100 antialiased selection:bg-emerald-500/20 selection:text-emerald-300">
@@ -443,6 +510,9 @@ export default function App() {
                 projectName={activeProject.name}
                 onSelectFinding={setSelectedFinding}
                 onNavigateTab={(tab) => setCurrentTab(tab as NavTab)}
+                dashboardSummary={dashboardSummary}
+                dashboardLoading={dashboardLoading}
+                dashboardError={dashboardError}
               />
             ) : (
               <ProjectsListView

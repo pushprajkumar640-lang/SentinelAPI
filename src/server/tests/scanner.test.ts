@@ -136,13 +136,13 @@ paths:
 
   // TEST 9: Security Score Calculation
   console.log('\n[9] Testing Real Security Score Calculation...');
-  // 1 Critical (-30), 2 High (-20 each), 1 Medium (-10), 1 Low (-5)
+  // Match the current scoring engine: Critical -25, High -15, Medium -8, Low -3.
   const calculatedScore = calculateSecurityScore(allFindings, discovered);
   assert(typeof calculatedScore.currentScore === 'number', 'Returns numeric security score');
   assert(calculatedScore.currentScore >= 0 && calculatedScore.currentScore <= 100, 'Score is bounded between 0 and 100');
-  assert(calculatedScore.deductions.criticalDeduction === calculatedScore.deductions.criticalCount * 30, 'Calculates Critical = -30');
-  assert(calculatedScore.deductions.highDeduction === calculatedScore.deductions.highCount * 20, 'Calculates High = -20');
-  assert(calculatedScore.deductions.mediumDeduction === calculatedScore.deductions.mediumCount * 10, 'Calculates Medium = -10');
+  assert(calculatedScore.deductions.criticalDeduction === calculatedScore.deductions.criticalCount * 25, 'Calculates Critical = -25');
+  assert(calculatedScore.deductions.highDeduction === calculatedScore.deductions.highCount * 15, 'Calculates High = -15');
+  assert(calculatedScore.deductions.mediumDeduction === calculatedScore.deductions.mediumCount * 8, 'Calculates Medium = -8');
   assert(calculateSecurityScore([], discovered).currentScore === 100, 'Zero findings score 100');
 
   // TEST 10: Full Integration Test - Run Demo Scan
