@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, FolderPlus } from 'lucide-react';
-import { createProjectInFirestore } from '../lib/firestoreService';
+import { apiFetch } from '../lib/api';
 
 interface NewProjectModalProps {
   isOpen: boolean;
@@ -19,6 +19,7 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
 }) => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [apiUrl, setApiUrl] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,50 +36,29 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
     setError(null);
 
     try {
-      let createdProject: any = null;
-
-      // 1. If user is authenticated with Firebase, save directly to Firestore projects collection
-      if (userId) {
-        try {
-          const fsProject = await createProjectInFirestore(userId, {
-            name: name.trim(),
-            description: description.trim()
-          });
-          createdProject = fsProject;
-        } catch (fsErr) {
-          console.warn('Firestore direct write fallback to API:', fsErr);
-        }
-      }
-
-      // 2. Also register in backend service
-      const token = await getToken();
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const res = await fetch('/api/projects', {
+      const res = await apiFetch('/api/projects', {
         method: 'POST',
         headers,
         body: JSON.stringify({
           name: name.trim(),
           description: description.trim(),
-          firestoreId: createdProject?.id
+          apiUrl: apiUrl.trim()
         })
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        createdProject = {
-          ...data.project,
-          id: createdProject?.id || data.project.id
-        };
-      } else if (!createdProject) {
+      if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || 'Failed to create project');
       }
+      const data = await res.json();
+      const createdProject = data.project;
 
       onProjectCreated(createdProject);
       setName('');
       setDescription('');
+      setApiUrl('');
       onClose();
     } catch (err: any) {
       setError(err.message || 'Error creating project');
@@ -131,6 +111,20 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
 
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              API / Sandbox URL <span className="text-red-400">*</span>
+            </label>
+            <input
+              type="url"
+              required
+              value={apiUrl}
+              onChange={(e) => setApiUrl(e.target.value)}
+              placeholder="https://authorized-sandbox.example.com"
+              className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:border-emerald-500/50 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
               Description
             </label>
             <textarea
@@ -158,7 +152,7 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
               {isSubmitting ? (
                 <>
                   <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-950 border-t-transparent" />
-                  <span>Saving to Firestore...</span>
+                  <span>Saving project...</span>
                 </>
               ) : (
                 <span>Create Project</span>

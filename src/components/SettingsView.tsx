@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiFetch } from '../lib/api';
 import {
   ShieldCheck,
   Lock,
@@ -37,7 +38,7 @@ export const SettingsView: React.FC = () => {
   const [isUpdatingSandbox, setIsUpdatingSandbox] = useState(false);
 
   useEffect(() => {
-    fetch('/api/sandbox/config')
+    apiFetch('/api/sandbox/config')
       .then((res) => res.json())
       .then((cfg) => {
         if (cfg && typeof cfg.enforceBolaCheck === 'boolean') {
@@ -51,7 +52,7 @@ export const SettingsView: React.FC = () => {
     setIsUpdatingSandbox(true);
     const updated = { ...sandboxConfig, [key]: !sandboxConfig[key] };
     try {
-      const res = await fetch('/api/sandbox/config', {
+      const res = await apiFetch('/api/sandbox/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updated)
@@ -68,7 +69,7 @@ export const SettingsView: React.FC = () => {
   const handleResetSandbox = async () => {
     setIsUpdatingSandbox(true);
     try {
-      const res = await fetch('/api/sandbox/reset', { method: 'POST' });
+      const res = await apiFetch('/api/sandbox/reset', { method: 'POST' });
       const data = await res.json();
       if (data && data.config) {
         setSandboxConfig(data.config);

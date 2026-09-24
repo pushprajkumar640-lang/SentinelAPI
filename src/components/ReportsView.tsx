@@ -18,7 +18,10 @@ interface ReportsViewProps {
   score: SecurityScoreBreakdown;
   totalEndpoints: number;
   apiName?: string;
+  apiUrl?: string | null;
   apiVersion?: string;
+  scanId?: string;
+  scanDate?: string;
 }
 
 export const ReportsView: React.FC<ReportsViewProps> = ({
@@ -26,7 +29,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   score,
   totalEndpoints,
   apiName = 'FoodDelivery Sandbox API',
-  apiVersion = 'v1.0.0'
+  apiUrl,
+  apiVersion = 'v1.0.0',
+  scanId = 'No completed scan',
+  scanDate
 }) => {
   const criticalFindings = findings.filter(f => f.severity === 'CRITICAL');
   const highFindings = findings.filter(f => f.severity === 'HIGH');
@@ -44,7 +50,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       apiInformation: {
         name: apiName,
         version: apiVersion,
-        targetScope: 'LOCAL_ISOLATED_SANDBOX_127.0.0.1',
+        targetScope: apiUrl || 'Authorized project target',
+        apiUrl: apiUrl || null,
+        scanId,
+        scanDate: scanDate || new Date().toISOString(),
         totalEndpoints
       },
       securityScore: {
@@ -121,8 +130,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           </div>
 
           <div className="text-right text-xs font-mono text-slate-400 print:text-slate-600">
-            <div>Audit Date: 2026-09-24</div>
-            <div>Target: 127.0.0.1 (Local Sandbox)</div>
+            <div>Audit Date: {scanDate ? new Date(scanDate).toLocaleDateString() : 'Not scanned'}</div>
+            <div>Target: {apiUrl || 'Authorized project target'}</div>
+            <div>Scan ID: {scanId}</div>
             <div>Status: <span className="text-emerald-400 print:text-emerald-700 font-bold">VERIFIED</span></div>
           </div>
         </div>

@@ -5,7 +5,8 @@ import {
   pgTable,
   serial,
   text,
-  timestamp
+  timestamp,
+  uniqueIndex
 } from 'drizzle-orm/pg-core';
 
 // 1. Users Table
@@ -13,10 +14,13 @@ export const users = pgTable('users', {
   id: serial('id').primaryKey(),
   uid: text('uid').notNull().unique(), // Firebase Auth UID
   email: text('email').notNull(),
+  passwordHash: text('password_hash'),
   displayName: text('display_name'),
   photoUrl: text('photo_url'),
   createdAt: timestamp('created_at').defaultNow().notNull()
-});
+}, (table) => ({
+  emailUnique: uniqueIndex('users_email_unique').on(table.email)
+}));
 
 // 2. Projects Table
 export const projects = pgTable('projects', {
@@ -26,6 +30,7 @@ export const projects = pgTable('projects', {
     .notNull(),
   name: text('name').notNull(),
   description: text('description'),
+  apiUrl: text('api_url'),
   isDemo: boolean('is_demo').default(false).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull()
@@ -73,17 +78,31 @@ export const scans = pgTable('scans', {
   projectId: integer('project_id')
     .references(() => projects.id, { onDelete: 'cascade' })
     .notNull(),
+  userId: integer('user_id')
+    .references(() => users.id, { onDelete: 'cascade' })
+    .notNull(),
   status: text('status').default('QUEUED').notNull(), // 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED'
   securityScore: integer('security_score').default(100).notNull(),
   ratingGrade: text('rating_grade').default('A').notNull(),
   totalEndpoints: integer('total_endpoints').default(0).notNull(),
+  endpointsScanned: integer('endpoints_scanned').default(0).notNull(),
   criticalCount: integer('critical_count').default(0).notNull(),
   highCount: integer('high_count').default(0).notNull(),
   mediumCount: integer('medium_count').default(0).notNull(),
   lowCount: integer('low_count').default(0).notNull(),
   durationSeconds: integer('duration_seconds').default(0).notNull(),
   startedAt: timestamp('started_at').defaultNow().notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
   completedAt: timestamp('completed_at')
+});
+
+export const sessions = pgTable('sessions', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  tokenHash: text('token_hash').notNull().unique(),
+  expiresAt: timestamp('expires_at').notNull(),
+  revokedAt: timestamp('revoked_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull()
 });
 
 // 6. Vulnerabilities Table
@@ -199,9 +218,14 @@ export const scansRelations = relations(scans, ({ one, many }) => ({
     fields: [scans.projectId],
     references: [projects.id]
   }),
+  user: one(users, { fields: [scans.userId], references: [users.id] }),
   vulnerabilities: many(vulnerabilities),
   reports: many(reports),
   scanRequests: many(scanRequests)
+}));
+
+export const sessionsRelations = relations(sessions, ({ one }) => ({
+  user: one(users, { fields: [sessions.userId], references: [users.id] })
 }));
 
 export const vulnerabilitiesRelations = relations(vulnerabilities, ({ one }) => ({

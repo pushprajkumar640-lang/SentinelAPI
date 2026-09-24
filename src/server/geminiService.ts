@@ -27,6 +27,13 @@ export interface ExplainRequest {
   endpoint?: string;
   codeSnippet?: string;
   evidence?: string;
+  project?: string;
+  apiUrl?: string;
+  scanId?: string;
+  securityScore?: number;
+  endpointsScanned?: number;
+  findings?: unknown[];
+  severityCounts?: Record<string, number>;
 }
 
 function getExpertOfflineExplanation(req: ExplainRequest): string {
@@ -139,7 +146,16 @@ Your mission is to explain API security findings clearly to developers and provi
 CRITICAL SAFETY RULE: You must ONLY reason about defensive security, vulnerability analysis, and safe remediation for authorized sandboxed test environments. You must NEVER provide instructions or payloads for attacking real production systems, malware creation, or unauthorized exploitation.
 Format your output with clear Markdown headings, bullet points, and concise code blocks.`;
 
-  const contextPrompt = `Analyze the following defensive security finding:
+  const contextPrompt = `Analyze only the current authorized SentinelAPI scan context below. Do not invent findings or use another project.
+Project: ${req.project || 'Unknown'}
+API URL: ${req.apiUrl || 'Unknown'}
+Scan ID: ${req.scanId || 'Unknown'}
+Security score: ${req.securityScore ?? 'Unknown'}
+Endpoints scanned: ${req.endpointsScanned ?? 'Unknown'}
+Severity counts: ${JSON.stringify(req.severityCounts || {})}
+Current scan findings: ${JSON.stringify(req.findings || [])}
+
+Analyze the following selected defensive finding:
 Finding Title: ${req.findingTitle || 'API Security Finding'}
 Severity: ${req.severity || 'UNKNOWN'}
 Endpoint: ${req.endpoint || 'N/A'}

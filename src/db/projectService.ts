@@ -28,6 +28,7 @@ export async function createProject(
   userId: number,
   name: string,
   description?: string,
+  apiUrl?: string,
   isDemo = false
 ) {
   try {
@@ -37,6 +38,7 @@ export async function createProject(
         userId,
         name,
         description: description || null,
+        apiUrl: apiUrl || null,
         isDemo
       })
       .returning();
@@ -75,6 +77,23 @@ export async function deleteProject(projectId: number, userId: number) {
     console.error('Error in deleteProject:', error);
     throw new Error('Failed to delete project', { cause: error });
   }
+}
+
+export async function updateProject(
+  projectId: number,
+  userId: number,
+  values: { name?: string; description?: string; apiUrl?: string }
+) {
+  const result = await db.update(projects)
+    .set({
+      ...(values.name !== undefined ? { name: values.name.trim() } : {}),
+      ...(values.description !== undefined ? { description: values.description.trim() || null } : {}),
+      ...(values.apiUrl !== undefined ? { apiUrl: values.apiUrl.trim() || null } : {}),
+      updatedAt: new Date()
+    })
+    .where(and(eq(projects.id, projectId), eq(projects.userId, userId)))
+    .returning();
+  return result[0] || null;
 }
 
 export async function saveApiSpec(
@@ -178,7 +197,7 @@ export async function getProjectEndpoints(projectId: number): Promise<ApiEndpoin
   }
 }
 
-export async function createScanRecord(projectId: number) {
+export async function createScanRecord(projectId: number, userId: number) {
   try {
     const scanId = `SCAN-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 1000)}`;
     const result = await db
@@ -186,8 +205,10 @@ export async function createScanRecord(projectId: number) {
       .values({
         scanId,
         projectId,
+        userId,
         status: 'QUEUED',
-        startedAt: new Date()
+        startedAt: new Date(),
+        createdAt: new Date()
       })
       .returning();
     return result[0];
@@ -306,8 +327,15 @@ export async function getProjectVulnerabilities(projectId: number, scanDbId?: nu
   }
 }
 
-export async function updateVulnerabilityStatus(vulnIdStr: string, status: 'OPEN' | 'RESOLVED') {
+export async function updateVulnerabilityStatus(vulnIdStr: string, status: 'OPEN' | 'RESOLVED', userId: number) {
   try {
+    const owned = await db
+      .select({ id: vulnerabilities.id })
+      .from(vulnerabilities)
+      .innerJoin(projects, eq(vulnerabilities.projectId, projects.id))
+      .where(and(eq(vulnerabilities.vulnId, vulnIdStr), eq(projects.userId, userId)))
+      .limit(1);
+    if (!owned[0]) return null;
     const result = await db
       .update(vulnerabilities)
       .set({ status })

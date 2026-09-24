@@ -3,12 +3,15 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig, Plugin} from 'vite';
 import express from 'express';
-import {createApiRouter} from './src/server/apiRouter';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 function apiMiddlewarePlugin(): Plugin {
   return {
     name: 'sentinel-api-middleware',
-    configureServer(server) {
+    async configureServer(server) {
+      const { createApiRouter } = await import('./src/server/apiRouter');
       const app = express();
       app.use(express.json({ limit: '10mb' }));
       app.use('/api', createApiRouter());

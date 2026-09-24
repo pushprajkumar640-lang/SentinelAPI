@@ -1,32 +1,22 @@
 import { drizzle as drizzlePg } from 'drizzle-orm/node-postgres';
-import { drizzle as drizzlePglite } from 'drizzle-orm/pglite';
-import { PGlite } from '@electric-sql/pglite';
 import { Pool } from 'pg';
-import fs from 'fs';
-import path from 'path';
 import * as schema from './schema';
 
 declare global {
   var _postgresPool: Pool | undefined;
-  var _pgliteClient: PGlite | undefined;
 }
 
 /**
- * The app uses a real PostgreSQL / Cloud SQL instance when SQL_HOST is configured.
- * When it is not (local dev, demo, CI), it falls back to an embedded PGlite
- * PostgreSQL database stored inside node_modules/.cache so every API route keeps working
- * without any external service.
+ * Production and development use Supabase or another PostgreSQL instance.
+ * There is no in-memory or embedded database fallback.
  */
-export const isExternalPostgresConfigured = Boolean(process.env.SQL_HOST);
+export const isExternalPostgresConfigured = Boolean(process.env.DATABASE_URL);
 
 export const createPool = () => {
   if (!global._postgresPool) {
     global._postgresPool = new Pool({
-      host: process.env.SQL_HOST,
-      port: Number(process.env.SQL_PORT) || 5432,
-      user: process.env.SQL_USER,
-      password: process.env.SQL_PASSWORD,
-      database: process.env.SQL_DB_NAME,
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.DATABASE_URL?.includes('supabase') ? { rejectUnauthorized: false } : undefined,
       max: 10,
       connectionTimeoutMillis: 15000,
     });
@@ -38,48 +28,30 @@ export const createPool = () => {
   return global._postgresPool;
 };
 
-function readMigrationSql(): string {
-  const dir = path.resolve(process.cwd(), 'drizzle');
-  if (!fs.existsSync(dir)) return '';
-  return fs
-    .readdirSync(dir)
-    .filter((f) => f.endsWith('.sql'))
-    .sort()
-    .map((f) => fs.readFileSync(path.join(dir, f), 'utf-8'))
-    .join('\n');
-}
+export const db = drizzlePg(
+  isExternalPostgresConfigured
+    ? createPool()
+    : new Pool({ connectionString: 'postgresql://database-not-configured' }),
+  { schema }
+);
 
-async function createEmbeddedDatabase() {
-  if (!global._pgliteClient) {
-    const dataDir =
-      process.env.PGLITE_DATA_DIR ||
-      path.resolve(process.cwd(), 'node_modules/.cache/sentinel-pglite');
-    fs.mkdirSync(dataDir, { recursive: true });
-    const client = new PGlite(dataDir);
-    await client.waitReady;
-
-    const sql = readMigrationSql();
-    for (const statement of sql.split('--> statement-breakpoint')) {
-      const trimmed = statement.trim();
-      if (!trimmed) continue;
-      try {
-        await client.exec(trimmed);
-      } catch (error: any) {
-        // Tables/constraints already exist on a warm database - safe to ignore.
-        if (!/already exists/i.test(String(error?.message))) {
-          console.error('Embedded database setup statement failed:', error?.message);
-        }
-      }
-    }
-
-    global._pgliteClient = client;
-    console.warn(
-      '[SentinelAPI] SQL_HOST is not set - using the embedded PostgreSQL database'
-    );
+export async function verifyDatabase() {
+  if (!isExternalPostgresConfigured) {
+    return { configured: false, connected: false, usersTable: false };
   }
-  return global._pgliteClient;
-}
 
-export const db = isExternalPostgresConfigured
-  ? drizzlePg(createPool(), { schema })
-  : drizzlePglite(await createEmbeddedDatabase(), { schema });
+  try {
+    const result = await createPool().query("select to_regclass('public.users') as users_table");
+    return {
+      configured: true,
+      connected: true,
+      usersTable: Boolean(result.rows[0]?.users_table)
+    };
+  } catch {
+    return {
+      configured: isExternalPostgresConfigured,
+      connected: false,
+      usersTable: false
+    };
+  }
+}

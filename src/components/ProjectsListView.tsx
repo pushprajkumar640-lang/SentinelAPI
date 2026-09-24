@@ -17,6 +17,7 @@ export interface ProjectCardData {
   id: string | number;
   name: string;
   description: string | null;
+  apiUrl?: string | null;
   isDemo?: boolean;
   totalEndpoints: number;
   scansCount: number;

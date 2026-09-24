@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
-import { adminAuth } from '../lib/firebase-admin';
-import { getOrCreateUser } from '../db/users';
-import { DecodedIdToken } from 'firebase-admin/auth';
+import { getOrCreateUser, isSessionActive } from '../db/users';
+import jwt from 'jsonwebtoken';
 
 export interface AuthUserRecord {
   id: number;
@@ -12,7 +11,7 @@ export interface AuthUserRecord {
 }
 
 export interface AuthRequest extends Request {
-  user?: DecodedIdToken;
+  user?: { uid: string; email?: string; name?: string };
   dbUser?: AuthUserRecord;
 }
 
@@ -26,9 +25,13 @@ export const requireAuth = async (
     return res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
   }
 
-  const token = authHeader.split('Bearer ')[1];
+  const token = authHeader.slice('Bearer '.length);
   try {
-    const decodedToken = await adminAuth.verifyIdToken(token);
+    if (!process.env.JWT_SECRET) return res.status(503).json({ error: 'JWT_SECRET is not configured' });
+    const decodedToken = jwt.verify(token, process.env.JWT_SECRET) as { uid: string; email?: string; name?: string };
+    if (!(await isSessionActive(token))) {
+      return res.status(401).json({ error: 'Unauthorized: Session expired or revoked' });
+    }
     req.user = decodedToken;
 
     // Synchronize to PostgreSQL users table
@@ -36,7 +39,7 @@ export const requireAuth = async (
       uid: decodedToken.uid,
       email: decodedToken.email || `${decodedToken.uid}@sentinelapi.local`,
       displayName: decodedToken.name || null,
-      photoUrl: decodedToken.picture || null
+      photoUrl: null
     });
 
     req.dbUser = dbUser;
@@ -55,15 +58,17 @@ export const optionalAuth = async (
 ) => {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.split('Bearer ')[1];
+    const token = authHeader.slice('Bearer '.length);
     try {
-      const decodedToken = await adminAuth.verifyIdToken(token);
+      if (!process.env.JWT_SECRET) return next();
+      const decodedToken = jwt.verify(token, process.env.JWT_SECRET) as { uid: string; email?: string; name?: string };
+      if (!(await isSessionActive(token))) return next();
       req.user = decodedToken;
       const dbUser = await getOrCreateUser({
         uid: decodedToken.uid,
         email: decodedToken.email || `${decodedToken.uid}@sentinelapi.local`,
         displayName: decodedToken.name || null,
-        photoUrl: decodedToken.picture || null
+        photoUrl: null
       });
       req.dbUser = dbUser;
     } catch {

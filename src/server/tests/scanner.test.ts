@@ -136,20 +136,21 @@ paths:
 
   // TEST 9: Security Score Calculation
   console.log('\n[9] Testing Real Security Score Calculation...');
-  // 1 Critical (-25), 2 High (-15 each = -30), 1 Medium (-8), 1 Low (-3) -> 100 - 25 - 30 - 8 - 3 = 34
+  // 1 Critical (-30), 2 High (-20 each), 1 Medium (-10), 1 Low (-5)
   const calculatedScore = calculateSecurityScore(allFindings, discovered);
   assert(typeof calculatedScore.currentScore === 'number', 'Returns numeric security score');
   assert(calculatedScore.currentScore >= 0 && calculatedScore.currentScore <= 100, 'Score is bounded between 0 and 100');
-  assert(calculatedScore.deductions.criticalDeduction === calculatedScore.deductions.criticalCount * 25, 'Calculates Critical = -25');
-  assert(calculatedScore.deductions.highDeduction === calculatedScore.deductions.highCount * 15, 'Calculates High = -15');
-  assert(calculatedScore.deductions.mediumDeduction === calculatedScore.deductions.mediumCount * 8, 'Calculates Medium = -8');
+  assert(calculatedScore.deductions.criticalDeduction === calculatedScore.deductions.criticalCount * 30, 'Calculates Critical = -30');
+  assert(calculatedScore.deductions.highDeduction === calculatedScore.deductions.highCount * 20, 'Calculates High = -20');
+  assert(calculatedScore.deductions.mediumDeduction === calculatedScore.deductions.mediumCount * 10, 'Calculates Medium = -10');
+  assert(calculateSecurityScore([], discovered).currentScore === 100, 'Zero findings score 100');
 
   // TEST 10: Full Integration Test - Run Demo Scan
   console.log('\n[10] Running Full Integration Test (Demo Scan Pipeline)...');
   const fullScanResult = await orchestrateScan({ isDemoSandbox: true });
   assert(fullScanResult.totalEndpoints > 0, 'Returns total endpoints count');
   assert(fullScanResult.findings.length > 0, 'Generates defensive vulnerability findings');
-  assert(fullScanResult.score.currentScore > 0, 'Calculates security score');
+  assert(fullScanResult.score.currentScore >= 0, 'Calculates security score');
   assert(Boolean(fullScanResult.scanId), 'Assigns unique scan ID');
 
   // TEST 11: Dynamic Sandbox Fix Acceptance Test

@@ -9,6 +9,7 @@ const user = process.env.SQL_ADMIN_USER || process.env.SQL_USER;
 const password = process.env.SQL_ADMIN_PASSWORD || process.env.SQL_PASSWORD;
 
 const hasExternalDatabase = Boolean(sqlHost && sqlDbName && user && password);
+const hasDatabaseUrl = Boolean(process.env.DATABASE_URL);
 
 /**
  * `drizzle-kit generate` only needs the schema, so it works with no environment
@@ -20,7 +21,13 @@ export default defineConfig({
   out: "./drizzle",
   dialect: "postgresql",
   schemaFilter: ["public"],
-  ...(hasExternalDatabase
+  ...(hasDatabaseUrl
+    ? {
+        dbCredentials: {
+          url: process.env.DATABASE_URL!
+        }
+      }
+    : hasExternalDatabase
     ? {
         dbCredentials: {
           host: sqlHost!,

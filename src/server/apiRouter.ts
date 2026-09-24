@@ -1,4 +1,6 @@
 import { Router, Request, Response } from 'express';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import {
   SANDBOX_ORDERS,
   SANDBOX_USERS,
@@ -13,12 +15,13 @@ import { parseOpenApiSpec, OpenApiParseError } from './scanner/openapiParser';
 import { discoverEndpoints } from './scanner/endpointDiscovery';
 import { orchestrateScan } from './scanner/scanOrchestrator';
 import { explainFindingOrPrompt } from './geminiService';
-import { optionalAuth, AuthRequest } from '../middleware/auth';
-import { getOrCreateUser } from '../db/users';
+import { optionalAuth, requireAuth, AuthRequest } from '../middleware/auth';
+import { createLocalUser, createSession, getOrCreateUser, getUserByEmail, revokeSession } from '../db/users';
 import {
   getUserProjects,
   createProject,
   getProjectById,
+  updateProject,
   deleteProject,
   saveApiSpec,
   getLatestApiSpec,
@@ -34,16 +37,38 @@ import {
   getProjectReports
 } from '../db/projectService';
 import { RAW_FOOD_DELIVERY_JSON } from '../data/foodDeliverySpec';
-import { isExternalPostgresConfigured } from '../db';
+import { isExternalPostgresConfigured, verifyDatabase } from '../db';
 
 // Helper to resolve authenticated user or developer user in PostgreSQL
 async function resolveUser(req: AuthRequest) {
-  if (req.dbUser) return req.dbUser;
-  return await getOrCreateUser({
-    uid: 'local_saas_developer',
-    email: 'developer@sentinelapi.local',
-    displayName: 'Lead Security Engineer'
-  });
+  if (!req.dbUser) throw new Error('AUTH_REQUIRED');
+  return req.dbUser;
+}
+
+function issueToken(user: { uid: string; email: string; displayName: string | null }) {
+  if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET is not configured');
+  return jwt.sign(
+    { uid: user.uid, email: user.email, name: user.displayName || undefined },
+    process.env.JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+}
+
+const SESSION_DAYS = 7;
+
+function sessionExpiry() {
+  return new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
+}
+
+function publicUser(user: { id: number; uid: string; email: string; displayName: string | null; photoUrl?: string | null }) {
+  return {
+    id: user.id,
+    uid: user.uid,
+    name: user.displayName,
+    displayName: user.displayName,
+    email: user.email,
+    photoUrl: user.photoUrl || null
+  };
 }
 
 export function createApiRouter(): Router {
@@ -51,17 +76,83 @@ export function createApiRouter(): Router {
   router.use(optionalAuth);
 
   // 1. Guardrail header check & Health
-  router.get('/health', (_req: Request, res: Response) => {
-    res.json({
-      status: 'ONLINE',
-      system: 'SENTINELAPI Security Scanner',
-      targetScope: 'AUTHORIZED_LOCAL_SANDBOX_ONLY',
-      version: '2.5.0',
-      database: isExternalPostgresConfigured
-        ? 'POSTGRESQL_CLOUD_SQL_CONNECTED'
-        : 'POSTGRESQL_EMBEDDED_LOCAL',
-      sandboxConfig: getSandboxConfig()
-    });
+  router.get('/health', async (_req: Request, res: Response) => {
+    const database = await verifyDatabase();
+    const ready = database.configured && database.connected && database.usersTable && Boolean(process.env.JWT_SECRET);
+    if (!ready) {
+      const error = !database.configured
+        ? 'Database connection is not configured.'
+        : !database.connected
+        ? 'Database connection failed.'
+        : !database.usersTable
+        ? 'Users table does not exist.'
+        : 'JWT_SECRET is not configured.';
+      const databaseStatus = !database.configured
+        ? 'not_configured'
+        : !database.connected
+        ? 'connection_failed'
+        : 'connected';
+      return res.status(503).json({ success: false, status: 'unhealthy', database: databaseStatus, error });
+    }
+    return res.json({ success: true, status: 'healthy', database: 'connected' });
+  });
+
+  router.post('/auth/register', async (req: Request, res: Response) => {
+    try {
+      const { name, email, password } = req.body || {};
+      if (!name?.trim() || !email?.trim() || typeof password !== 'string' || password.length < 8) {
+        return res.status(422).json({ success: false, error: 'Name, email, and a password of at least 8 characters are required' });
+      }
+      if (!process.env.DATABASE_URL) return res.status(503).json({ success: false, error: 'Database connection is not configured.' });
+      if (!process.env.JWT_SECRET) return res.status(503).json({ success: false, error: 'JWT_SECRET is not configured.' });
+      const database = await verifyDatabase();
+      if (!database.connected) return res.status(503).json({ success: false, error: 'Database connection failed.' });
+      if (!database.usersTable) return res.status(503).json({ success: false, error: 'Users table does not exist. Run the database migration first.' });
+      if (await getUserByEmail(email.trim())) return res.status(409).json({ success: false, error: 'Email already exists.' });
+      const user = await createLocalUser({
+        email: email.trim(),
+        displayName: name.trim(),
+        passwordHash: await bcrypt.hash(password, 12)
+      });
+      const token = issueToken(user);
+      await createSession(user.id, token, sessionExpiry());
+      return res.status(201).json({ success: true, user: publicUser(user), token });
+    } catch (err) {
+      const code = (err as { code?: string })?.code;
+      console.error('Registration error:', code || (err instanceof Error ? err.message : 'unknown error'));
+      if (code === '23505') return res.status(409).json({ success: false, error: 'Email already exists.' });
+      if (code === '42P01') return res.status(503).json({ success: false, error: 'Users table does not exist. Run the database migration first.' });
+      return res.status(500).json({ success: false, error: 'Registration failed because the database could not create the account.' });
+    }
+  });
+
+  router.post('/auth/login', async (req: Request, res: Response) => {
+    try {
+      const { email, password } = req.body || {};
+      if (!process.env.DATABASE_URL) return res.status(503).json({ success: false, error: 'Database connection is not configured.' });
+      if (!process.env.JWT_SECRET) return res.status(503).json({ success: false, error: 'JWT_SECRET is not configured.' });
+      const database = await verifyDatabase();
+      if (!database.connected) return res.status(503).json({ success: false, error: 'Database connection failed.' });
+      if (!database.usersTable) return res.status(503).json({ success: false, error: 'Users table does not exist. Run the database migration first.' });
+      const user = typeof email === 'string' ? await getUserByEmail(email.trim()) : null;
+      if (!user?.passwordHash || typeof password !== 'string' || !(await bcrypt.compare(password, user.passwordHash))) {
+        return res.status(401).json({ success: false, error: 'Invalid email or password' });
+      }
+      const token = issueToken(user);
+      await createSession(user.id, token, sessionExpiry());
+      return res.json({ success: true, user: publicUser(user), token });
+    } catch (err) {
+      console.error('Login error:', err instanceof Error ? err.message : 'unknown error');
+      return res.status(500).json({ success: false, error: 'Login failed because the database could not verify the account.' });
+    }
+  });
+
+  router.post('/auth/logout', async (req: Request, res: Response) => {
+    const token = req.headers.authorization?.startsWith('Bearer ')
+      ? req.headers.authorization.slice('Bearer '.length)
+      : null;
+    if (token) await revokeSession(token).catch(() => {});
+    return res.json({ success: true });
   });
 
   // ==========================================
@@ -72,11 +163,13 @@ export function createApiRouter(): Router {
   router.get('/auth/me', async (req: AuthRequest, res: Response) => {
     try {
       const user = await resolveUser(req);
-      res.json({ user, authenticated: Boolean(req.dbUser) });
+      res.json({ user: publicUser(user), authenticated: true });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(401).json({ error: 'Unauthorized' });
     }
   });
+
+  router.use(requireAuth);
 
   // Get user projects
   router.get('/projects', async (req: AuthRequest, res: Response) => {
@@ -123,13 +216,17 @@ export function createApiRouter(): Router {
   router.post('/projects', async (req: AuthRequest, res: Response) => {
     try {
       const user = await resolveUser(req);
-      const { name, description } = req.body || {};
+      const { name, description, apiUrl } = req.body || {};
 
       if (!name || typeof name !== 'string' || !name.trim()) {
         return res.status(400).json({ error: 'Project name is required' });
       }
+      if (!apiUrl || typeof apiUrl !== 'string' || !apiUrl.trim()) {
+        return res.status(422).json({ error: 'API URL is required and must be provided separately from the project name' });
+      }
 
-      const project = await createProject(user.id, name.trim(), description?.trim() || undefined);
+      if (apiUrl && !/^https?:\/\//i.test(apiUrl)) return res.status(422).json({ error: 'API URL must be an http(s) URL' });
+      const project = await createProject(user.id, name.trim(), description?.trim() || undefined, apiUrl?.trim());
       res.status(201).json({ project });
     } catch (err: any) {
       console.error('Error creating project:', err);
@@ -190,6 +287,21 @@ export function createApiRouter(): Router {
     } catch (err: any) {
       console.error('Error deleting project:', err);
       res.status(500).json({ error: err.message || 'Failed to delete project' });
+    }
+  });
+
+  router.put('/projects/:id', async (req: AuthRequest, res: Response) => {
+    try {
+      const user = await resolveUser(req);
+      const projectId = parseInt(req.params.id, 10);
+      const existing = await getProjectById(projectId, user.id);
+      if (!existing) return res.status(404).json({ error: 'Project not found' });
+      const { name, description, apiUrl } = req.body || {};
+      if (apiUrl && !/^https?:\/\//i.test(apiUrl)) return res.status(422).json({ error: 'API URL must be an http(s) URL' });
+      const updated = await updateProject(projectId, user.id, { name, description, apiUrl });
+      return res.json({ project: updated });
+    } catch {
+      return res.status(500).json({ error: 'Failed to update project' });
     }
   });
 
@@ -291,7 +403,7 @@ export function createApiRouter(): Router {
       const specContent = spec ? spec.rawSpec : RAW_FOOD_DELIVERY_JSON;
 
       // 1. Create scan record with status QUEUED
-      const scanRecord = await createScanRecord(projectId);
+      const scanRecord = await createScanRecord(projectId, user.id);
 
       // 2. Update to RUNNING
       await updateScanRecord(scanRecord.id, { status: 'RUNNING' });
@@ -299,8 +411,8 @@ export function createApiRouter(): Router {
       // 3. Run actual defensive scan pipeline
       const scanResult = await orchestrateScan({
         specContent,
-        isDemoSandbox: project.isDemo || targetBaseUrl?.includes('/sandbox') || !targetBaseUrl,
-        targetBaseUrl: targetBaseUrl || spec?.baseUrl || 'http://127.0.0.1:3000/api/sandbox',
+        isDemoSandbox: project.isDemo,
+        targetBaseUrl: targetBaseUrl || project.apiUrl || spec?.baseUrl || 'http://127.0.0.1:3000/api/sandbox',
         isAuthorized: true
       });
 
@@ -313,6 +425,7 @@ export function createApiRouter(): Router {
         securityScore: scanResult.score.currentScore,
         ratingGrade: scanResult.score.ratingGrade,
         totalEndpoints: scanResult.totalEndpoints,
+        endpointsScanned: scanResult.totalEndpoints,
         criticalCount: scanResult.summary.critical,
         highCount: scanResult.summary.high,
         mediumCount: scanResult.summary.medium,
@@ -398,7 +511,9 @@ export function createApiRouter(): Router {
         return res.status(400).json({ error: 'Status must be OPEN or RESOLVED' });
       }
 
-      const updated = await updateVulnerabilityStatus(vulnId, status);
+      const user = await resolveUser(req);
+      const updated = await updateVulnerabilityStatus(vulnId, status, user.id);
+      if (!updated) return res.status(404).json({ error: 'Vulnerability not found' });
       res.json({ message: 'Vulnerability status updated', vulnerability: updated });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to update vulnerability status' });
@@ -440,6 +555,7 @@ export function createApiRouter(): Router {
           user.id,
           'SentinelAPI Demo Sandbox',
           'Intentionally vulnerable sandbox environment for live defensive security evaluation',
+          'http://127.0.0.1:3000/api/sandbox',
           true
         );
       }
@@ -537,14 +653,21 @@ export function createApiRouter(): Router {
 
   router.post('/gemini/explain', async (req: Request, res: Response) => {
     try {
-      const { prompt, finding } = req.body || {};
+      const { prompt, finding, project, apiUrl, scanId, securityScore, endpointsScanned, findings, severityCounts } = req.body || {};
       const answer = await explainFindingOrPrompt({
         prompt: prompt || 'Explain this API vulnerability and best-practice remediation.',
         findingTitle: finding?.title,
         severity: finding?.severity,
         endpoint: finding?.endpoint,
         codeSnippet: finding?.remediation?.codeSnippet,
-        evidence: finding?.evidence
+        evidence: finding?.evidence,
+        project,
+        apiUrl,
+        scanId,
+        securityScore,
+        endpointsScanned,
+        findings,
+        severityCounts
       });
       res.json({ answer });
     } catch (err: any) {

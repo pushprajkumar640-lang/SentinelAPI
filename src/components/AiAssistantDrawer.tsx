@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { apiFetch } from '../lib/api';
 import {
   X,
   Sparkles,
@@ -22,12 +23,22 @@ interface AiAssistantDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   activeFinding?: VulnerabilityFinding | null;
+  scanContext?: {
+    project?: string;
+    apiUrl?: string | null;
+    scanId?: string;
+    securityScore?: number;
+    endpointsScanned?: number;
+    findings?: VulnerabilityFinding[];
+    severityCounts?: Record<string, number>;
+  };
 }
 
 export const AiAssistantDrawer: React.FC<AiAssistantDrawerProps> = ({
   isOpen,
   onClose,
   activeFinding
+  , scanContext
 }) => {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -56,7 +67,7 @@ export const AiAssistantDrawer: React.FC<AiAssistantDrawerProps> = ({
     setLoading(true);
 
     try {
-      const res = await fetch('/api/gemini/explain', {
+      const res = await apiFetch('/api/gemini/explain', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -66,13 +77,14 @@ export const AiAssistantDrawer: React.FC<AiAssistantDrawerProps> = ({
           endpoint: activeFinding ? `${activeFinding.method} ${activeFinding.endpoint}` : undefined,
           evidence: activeFinding?.evidence,
           codeSnippet: activeFinding?.remediation.codeSnippet
+          , ...scanContext
         })
       });
 
       const data = await res.json();
       const botMsg: Message = {
         sender: 'assistant',
-        text: data.explanation || 'Unable to generate response.',
+        text: data.answer || 'Unable to generate response.',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
       setMessages((prev) => [...prev, botMsg]);

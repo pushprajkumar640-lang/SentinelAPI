@@ -18,16 +18,9 @@ import { PresentationModeModal } from './components/PresentationModeModal';
 import { AiAssistantDrawer } from './components/AiAssistantDrawer';
 import { ProjectsListView, ProjectCardData } from './components/ProjectsListView';
 import { NewProjectModal } from './components/NewProjectModal';
+import { AuthView } from './components/AuthView';
 import { useAuth } from './context/AuthContext';
-import {
-  getUserProjectsFromFirestore,
-  getProjectEndpointsFromFirestore,
-  getProjectVulnerabilitiesFromFirestore,
-  getProjectScansFromFirestore,
-  deleteProjectFromFirestore,
-  updateVulnerabilityStatusInFirestore
-} from './lib/firestoreService';
-
+import { apiFetch } from './lib/api';
 import {
   VulnerabilityFinding,
   ApiEndpoint,
@@ -54,7 +47,7 @@ const DEFAULT_EMPTY_SCORE: SecurityScoreBreakdown = {
 };
 
 export default function App() {
-  const { user, loading: authLoading, signInWithGoogle, signInDemoAuditor, getToken } = useAuth();
+  const { user, loading: authLoading, getToken } = useAuth();
 
   // Projects state
   const [projects, setProjects] = useState<ProjectCardData[]>([]);
@@ -86,10 +79,10 @@ export default function App() {
     const mediumCount = unresolved.filter((f) => f.severity === 'MEDIUM').length;
     const lowCount = unresolved.filter((f) => f.severity === 'LOW').length;
 
-    const criticalDeduction = criticalCount * 25;
-    const highDeduction = highCount * 15;
-    const mediumDeduction = mediumCount * 8;
-    const lowDeduction = lowCount * 3;
+    const criticalDeduction = criticalCount * 30;
+    const highDeduction = highCount * 20;
+    const mediumDeduction = mediumCount * 10;
+    const lowDeduction = lowCount * 5;
 
     const totalDeductions =
       criticalDeduction + highDeduction + mediumDeduction + lowDeduction;
@@ -119,40 +112,17 @@ export default function App() {
     });
   };
 
-  // Fetch projects from Cloud Firestore (primary) and PostgreSQL (secondary)
+  // Fetch projects from the authenticated PostgreSQL backend.
   const fetchProjects = useCallback(async () => {
     setLoadingProjects(true);
     try {
-      let firestoreProjects: ProjectCardData[] = [];
-
-      // 1. Fetch from Firestore if user is authenticated
-      if (user?.uid) {
-        try {
-          const fsProjects = await getUserProjectsFromFirestore(user.uid);
-          firestoreProjects = fsProjects.map((p) => ({
-            id: p.id,
-            name: p.name,
-            description: p.description,
-            isDemo: false,
-            totalEndpoints: p.totalEndpoints || 0,
-            scansCount: p.scansCount || 0,
-            createdAt: p.createdAt,
-            updatedAt: p.createdAt,
-            latestScan: p.latestScan || null
-          }));
-        } catch (fsErr) {
-          console.warn('Firestore load note:', fsErr);
-        }
-      }
-
-      // 2. Fetch from backend API
       const token = await getToken();
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
       let backendProjects: ProjectCardData[] = [];
       try {
-        const res = await fetch('/api/projects', { headers });
+        const res = await apiFetch('/api/projects', { headers });
         if (res.ok) {
           const data = await res.json();
           backendProjects = data.projects || [];
@@ -161,18 +131,7 @@ export default function App() {
         console.warn('Backend projects fetch note:', err);
       }
 
-      // Merge projects avoiding duplicates
-      const mergedMap = new Map<string, ProjectCardData>();
-      for (const p of firestoreProjects) {
-        mergedMap.set(String(p.id), p);
-      }
-      for (const p of backendProjects) {
-        if (!mergedMap.has(String(p.id))) {
-          mergedMap.set(String(p.id), p);
-        }
-      }
-
-      const allProjects = Array.from(mergedMap.values());
+      const allProjects = backendProjects;
       setProjects(allProjects);
 
       // If active project is still in list, keep it; otherwise null
@@ -204,75 +163,27 @@ export default function App() {
     });
   };
 
-  // Load project-specific data from Firestore & backend
+  // Load project-specific data from PostgreSQL.
   const loadProjectData = async (project: ProjectCardData) => {
     try {
-      const projIdStr = String(project.id);
-      const uid = user?.uid;
-
-      // 1. Try Firestore first if authenticated
-      let loadedEndpoints: ApiEndpoint[] = [];
-      let loadedFindings: VulnerabilityFinding[] = [];
-      let loadedScans: ScanRecordItem[] = [];
-
-      if (uid) {
-        try {
-          const [fsEndpoints, fsVulns, fsScans] = await Promise.all([
-            getProjectEndpointsFromFirestore(projIdStr, uid),
-            getProjectVulnerabilitiesFromFirestore(projIdStr, uid),
-            getProjectScansFromFirestore(projIdStr, uid)
-          ]);
-
-          if (fsEndpoints.length > 0) loadedEndpoints = fsEndpoints;
-          if (fsVulns.length > 0) loadedFindings = fsVulns;
-          if (fsScans.length > 0) {
-            loadedScans = fsScans.map((s) => ({
-              id: s.id,
-              scanId: s.scanId,
-              projectId: s.projectId,
-              status: s.status,
-              securityScore: s.securityScore,
-              ratingGrade: s.ratingGrade,
-              totalEndpoints: s.endpointsScanned,
-              criticalCount: s.criticalCount,
-              highCount: s.highCount,
-              mediumCount: s.mediumCount,
-              lowCount: s.lowCount,
-              durationSeconds: 1.5,
-              startedAt: s.startedAt,
-              completedAt: s.completedAt || s.startedAt
-            }));
-          }
-        } catch (fsErr) {
-          console.warn('Firestore load project data note:', fsErr);
-        }
-      }
-
-      // 2. Fallback or augment with backend if empty
-      if (loadedEndpoints.length === 0 || loadedFindings.length === 0) {
-        const token = await getToken();
-        const headers: Record<string, string> = {};
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-
-        const [epsRes, vulnsRes, scansRes] = await Promise.all([
-          fetch(`/api/projects/${project.id}/endpoints`, { headers }),
-          fetch(`/api/projects/${project.id}/vulnerabilities`, { headers }),
-          fetch(`/api/projects/${project.id}/scans`, { headers })
-        ]);
-
-        if (epsRes.ok && loadedEndpoints.length === 0) {
-          const epsData = await epsRes.json();
-          loadedEndpoints = epsData.endpoints || [];
-        }
-        if (vulnsRes.ok && loadedFindings.length === 0) {
-          const vulnsData = await vulnsRes.json();
-          loadedFindings = vulnsData.vulnerabilities || [];
-        }
-        if (scansRes.ok && loadedScans.length === 0) {
-          const scansData = await scansRes.json();
-          loadedScans = scansData.scans || [];
-        }
-      }
+      const token = await getToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const [epsRes, scansRes] = await Promise.all([
+        apiFetch(`/api/projects/${project.id}/endpoints`, { headers }),
+        apiFetch(`/api/projects/${project.id}/scans`, { headers })
+      ]);
+      const endpointsData = epsRes.ok ? await epsRes.json() : { endpoints: [] };
+      const scansData = scansRes.ok ? await scansRes.json() : { scans: [] };
+      const loadedEndpoints: ApiEndpoint[] = endpointsData.endpoints || [];
+      const loadedScans: ScanRecordItem[] = scansData.scans || [];
+      const latestScan = loadedScans[0];
+      const vulnsRes = await apiFetch(
+        `/api/projects/${project.id}/vulnerabilities${latestScan?.id ? `?scanId=${latestScan.id}` : ''}`,
+        { headers }
+      );
+      const vulnsData = vulnsRes.ok ? await vulnsRes.json() : { vulnerabilities: [] };
+      const loadedFindings: VulnerabilityFinding[] = vulnsData.vulnerabilities || [];
 
       const safeFindings = ensureUniqueFindings(loadedFindings);
       setEndpoints(loadedEndpoints);
@@ -305,6 +216,7 @@ export default function App() {
       id: newProj.id || newProj.projectId,
       name: newProj.name,
       description: newProj.description,
+      apiUrl: newProj.apiUrl,
       isDemo: false,
       totalEndpoints: 0,
       scansCount: 0,
@@ -322,7 +234,7 @@ export default function App() {
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const res = await fetch('/api/demo/setup', { method: 'POST', headers });
+      const res = await apiFetch('/api/demo/setup', { method: 'POST', headers });
       if (res.ok) {
         const data = await res.json();
         const demoProj: ProjectCardData = {
@@ -350,17 +262,11 @@ export default function App() {
   // Delete project
   const handleDeleteProject = async (projectId: string | number) => {
     try {
-      // 1. Delete from Firestore
-      if (user?.uid) {
-        await deleteProjectFromFirestore(user.uid, String(projectId)).catch(() => {});
-      }
-
-      // 2. Delete from backend API
       const token = await getToken();
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      await fetch(`/api/projects/${projectId}`, {
+      await apiFetch(`/api/projects/${projectId}`, {
         method: 'DELETE',
         headers
       }).catch(() => {});
@@ -454,18 +360,12 @@ export default function App() {
     setFindings(updated);
     recalculateScore(updated, endpoints.length);
 
-    // Update in Firestore
-    if (user?.uid) {
-      updateVulnerabilityStatusInFirestore(user.uid, findingId, newStatus).catch(() => {});
-    }
-
-    // Update in backend
     try {
       const token = await getToken();
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      await fetch(`/api/vulnerabilities/${findingId}/status`, {
+      await apiFetch(`/api/vulnerabilities/${findingId}/status`, {
         method: 'PATCH',
         headers,
         body: JSON.stringify({ status: newStatus })
@@ -480,6 +380,12 @@ export default function App() {
     setActiveAiFinding(finding);
     setIsAiAssistantOpen(true);
   };
+
+  if (authLoading) {
+    return <div className="min-h-screen bg-[#06080c] flex items-center justify-center text-xs font-mono text-emerald-400">Restoring secure session...</div>;
+  }
+
+  if (!user) return <AuthView />;
 
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-[#06080c] text-slate-100 antialiased selection:bg-emerald-500/20 selection:text-emerald-300">
@@ -591,7 +497,10 @@ export default function App() {
               score={score}
               totalEndpoints={endpoints.length}
               apiName={activeProject?.name || 'Authorized Sandbox API'}
+              apiUrl={activeProject?.apiUrl}
               apiVersion="v1.0.0"
+              scanId={scans[0]?.scanId}
+              scanDate={scans[0]?.completedAt || scans[0]?.startedAt}
             />
           )}
 
@@ -625,6 +534,20 @@ export default function App() {
           onClose={() => setSelectedFinding(null)}
           onToggleResolve={handleToggleResolve}
           onOpenAiAssistant={handleOpenAiAssistant}
+          scanContext={{
+            project: activeProject?.name,
+            apiUrl: activeProject?.apiUrl,
+            scanId: scans[0]?.scanId,
+            securityScore: score.currentScore,
+            endpointsScanned: endpoints.length,
+            findings,
+            severityCounts: {
+              CRITICAL: findings.filter((f) => f.severity === 'CRITICAL').length,
+              HIGH: findings.filter((f) => f.severity === 'HIGH').length,
+              MEDIUM: findings.filter((f) => f.severity === 'MEDIUM').length,
+              LOW: findings.filter((f) => f.severity === 'LOW').length
+            }
+          }}
         />
       )}
 
@@ -644,6 +567,20 @@ export default function App() {
         isOpen={isAiAssistantOpen}
         onClose={() => setIsAiAssistantOpen(false)}
         activeFinding={activeAiFinding}
+        scanContext={{
+          project: activeProject?.name,
+          apiUrl: activeProject?.apiUrl,
+          scanId: scans[0]?.scanId,
+          securityScore: score.currentScore,
+          endpointsScanned: endpoints.length,
+          findings,
+          severityCounts: {
+            CRITICAL: findings.filter((f) => f.severity === 'CRITICAL').length,
+            HIGH: findings.filter((f) => f.severity === 'HIGH').length,
+            MEDIUM: findings.filter((f) => f.severity === 'MEDIUM').length,
+            LOW: findings.filter((f) => f.severity === 'LOW').length
+          }
+        }}
       />
     </div>
   );

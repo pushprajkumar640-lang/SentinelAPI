@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { apiFetch } from '../lib/api';
 import {
   X,
   ShieldAlert,
@@ -19,6 +20,7 @@ interface FindingDetailModalProps {
   onClose: () => void;
   onToggleResolve: (findingId: string) => void;
   onOpenAiAssistant?: (finding: VulnerabilityFinding) => void;
+  scanContext?: Record<string, unknown>;
 }
 
 export const FindingDetailModal: React.FC<FindingDetailModalProps> = ({
@@ -26,6 +28,7 @@ export const FindingDetailModal: React.FC<FindingDetailModalProps> = ({
   onClose,
   onToggleResolve,
   onOpenAiAssistant
+  , scanContext
 }) => {
   const [activeTab, setActiveTab] = useState<'poc' | 'remediation' | 'ai'>('poc');
   const [copiedCode, setCopiedCode] = useState(false);
@@ -44,7 +47,7 @@ export const FindingDetailModal: React.FC<FindingDetailModalProps> = ({
     setAiLoading(true);
     setActiveTab('ai');
     try {
-      const res = await fetch('/api/gemini/explain', {
+      const res = await apiFetch('/api/gemini/explain', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -54,10 +57,11 @@ export const FindingDetailModal: React.FC<FindingDetailModalProps> = ({
           endpoint: `${finding.method} ${finding.endpoint}`,
           evidence: finding.evidence,
           codeSnippet: finding.remediation.codeSnippet
+          , ...scanContext
         })
       });
       const data = await res.json();
-      setAiResponse(data.explanation || 'No response received from Sentinel AI.');
+      setAiResponse(data.answer || 'No response received from Sentinel AI.');
     } catch {
       setAiResponse(finding.aiExplanation || 'Sentinel AI is currently in offline defensive mode.');
     } finally {

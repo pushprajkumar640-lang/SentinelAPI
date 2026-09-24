@@ -18,13 +18,7 @@ import {
 import { RAW_FOOD_DELIVERY_JSON } from '../data/foodDeliverySpec';
 import { ScanResult, ApiEndpoint } from '../types/security';
 import { ProjectCardData } from './ProjectsListView';
-import {
-  saveApiSpecificationToFirestore,
-  saveEndpointsToFirestore,
-  logScanRequestInFirestore,
-  createScanInFirestore,
-  saveReportToFirestore
-} from '../lib/firestoreService';
+import { apiFetch } from '../lib/api';
 
 interface ScanApiViewProps {
   activeProject: ProjectCardData | null;
@@ -56,7 +50,7 @@ export const ScanApiView: React.FC<ScanApiViewProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'upload' | 'raw' | 'sandbox'>('upload');
   const [specInput, setSpecInput] = useState<string>('');
-  const [targetBaseUrl, setTargetBaseUrl] = useState<string>('http://127.0.0.1:3000/api/sandbox');
+  const [targetBaseUrl, setTargetBaseUrl] = useState<string>(activeProject?.apiUrl || 'http://127.0.0.1:3000/api/sandbox');
   const [isAuthorizedConfirmed, setIsAuthorizedConfirmed] = useState<boolean>(activeProject?.isDemo || false);
 
   const [parseError, setParseError] = useState<string | null>(null);
@@ -88,7 +82,7 @@ export const ScanApiView: React.FC<ScanApiViewProps> = ({
 
   // Fetch sandbox config
   useEffect(() => {
-    fetch('/api/sandbox/config')
+    apiFetch('/api/sandbox/config')
       .then((res) => res.json())
       .then((cfg) => {
         if (cfg && typeof cfg.enforceBolaCheck === 'boolean') {
@@ -102,7 +96,7 @@ export const ScanApiView: React.FC<ScanApiViewProps> = ({
     setIsTogglingConfig(true);
     const updated = { ...sandboxConfig, [key]: !sandboxConfig[key] };
     try {
-      const res = await fetch('/api/sandbox/config', {
+      const res = await apiFetch('/api/sandbox/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updated)
@@ -121,7 +115,7 @@ export const ScanApiView: React.FC<ScanApiViewProps> = ({
   const handleResetSandbox = async () => {
     setIsTogglingConfig(true);
     try {
-      const res = await fetch('/api/sandbox/reset', { method: 'POST' });
+      const res = await apiFetch('/api/sandbox/reset', { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         setSandboxConfig(data.config);
@@ -164,7 +158,7 @@ export const ScanApiView: React.FC<ScanApiViewProps> = ({
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const res = await fetch(`/api/projects/${activeProject.id}/spec`, {
+      const res = await apiFetch(`/api/projects/${activeProject.id}/spec`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ specContent: specInput })
@@ -175,34 +169,8 @@ export const ScanApiView: React.FC<ScanApiViewProps> = ({
         throw new Error(data.error || 'Failed to parse and save specification');
       }
 
-      // Persist to Cloud Firestore collections if authenticated
-      if (userId) {
-        try {
-          const specId = await saveApiSpecificationToFirestore(userId, String(activeProject.id), {
-            title: data.spec?.title || activeProject.name,
-            version: data.spec?.version || '1.0.0',
-            description: activeProject.description || '',
-            baseUrl: data.spec?.baseUrl || targetBaseUrl,
-            rawSpec: specInput,
-            format: data.spec?.format || 'json',
-            totalEndpoints: data.totalEndpoints,
-            methodsCount: data.methodsCount || {},
-            authTypes: data.authTypes || []
-          });
-
-          await saveEndpointsToFirestore(
-            userId,
-            String(activeProject.id),
-            specId,
-            data.endpoints
-          );
-        } catch (fsErr) {
-          console.warn('Firestore spec/endpoints sync note:', fsErr);
-        }
-      }
-
       setSpecSavedSuccess(
-        `✓ Success: ${data.totalEndpoints} endpoints discovered and registered in Firestore!`
+        `✓ Success: ${data.totalEndpoints} endpoints discovered and registered in PostgreSQL!`
       );
       onSpecSaved(data.totalEndpoints, data.endpoints);
     } catch (err: any) {
@@ -231,16 +199,6 @@ export const ScanApiView: React.FC<ScanApiViewProps> = ({
       `[DEFENSE] Zero destructive payloads enabled (RFC-compliant defensive probes only)`
     ]);
 
-    // Log scan request in Firestore
-    if (userId) {
-      logScanRequestInFirestore(userId, String(activeProject.id), {
-        targetScope: activeProject.isDemo ? 'LOCAL_SANDBOX' : 'AUTHORIZED_TEST',
-        baseUrl: targetBaseUrl,
-        authorizationConfirmed: isAuthorizedConfirmed,
-        endpointsCount: endpoints.length
-      }).catch(() => {});
-    }
-
     const scanStages = [
       'Ingesting OpenAPI Contract & Schema Models',
       'Auditing Object-Level Authorization Boundaries (BOLA/IDOR)',
@@ -267,7 +225,7 @@ export const ScanApiView: React.FC<ScanApiViewProps> = ({
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const res = await fetch(`/api/projects/${activeProject.id}/scan`, {
+      const res = await apiFetch(`/api/projects/${activeProject.id}/scan`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -285,30 +243,6 @@ export const ScanApiView: React.FC<ScanApiViewProps> = ({
 
       const data = await res.json();
 
-      // Persist scan, vulnerabilities, and report to Firestore
-      if (userId) {
-        try {
-          await createScanInFirestore(userId, String(activeProject.id), data);
-          await saveReportToFirestore(
-            userId,
-            String(activeProject.id),
-            data.scan?.scanId || `SCAN-${Date.now()}`,
-            {
-              title: `Defensive Audit Report - ${activeProject.name}`,
-              apiName: activeProject.name,
-              apiVersion: '1.0.0',
-              securityScore: data.score.currentScore,
-              ratingGrade: data.score.ratingGrade,
-              totalEndpoints: data.totalEndpoints,
-              findingsSummary: data.summary,
-              findings: data.findings
-            }
-          );
-        } catch (fsErr) {
-          console.warn('Firestore scan/report sync note:', fsErr);
-        }
-      }
-
       setCompletedResult(data);
       setScanStepIndex(scanStages.length);
       setScanLogs((prev) => [
@@ -318,7 +252,7 @@ export const ScanApiView: React.FC<ScanApiViewProps> = ({
         `[✓] Completed data exposure analysis (${data.summary.high} High schema leaks detected)`,
         `[✓] Completed rate limiting checks (${data.summary.medium} Medium unthrottled endpoints)`,
         `[✓] Security score calculated: ${data.score.currentScore}/100 (Grade ${data.score.ratingGrade})`,
-        `[✓] Findings, Scan Record, and Audit Report persisted to Cloud Firestore!`,
+        `[✓] Findings, Scan Record, and Audit Report persisted to PostgreSQL!`,
         `[✓] Defensive audit completed. Duration: ${data.durationSeconds}s`
       ]);
       onScanCompleted(data);
