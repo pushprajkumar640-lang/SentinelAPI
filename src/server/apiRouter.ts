@@ -267,8 +267,8 @@ export function createApiRouter(): Router {
   router.get('/projects/:id', async (req: AuthRequest, res: Response) => {
     try {
       const user = await resolveUser(req);
-      const projectId = parseInt(req.params.id, 10);
-      if (isNaN(projectId)) return res.status(400).json({ error: 'Invalid project ID' });
+      const projectId = req.params.id;
+      if (!projectId) return res.status(400).json({ error: 'Invalid project ID' });
 
       const project = await getProjectById(projectId, user.id);
       if (!project) return res.status(404).json({ error: 'Project not found' });
@@ -308,8 +308,8 @@ export function createApiRouter(): Router {
   router.delete('/projects/:id', async (req: AuthRequest, res: Response) => {
     try {
       const user = await resolveUser(req);
-      const projectId = parseInt(req.params.id, 10);
-      if (isNaN(projectId)) return res.status(400).json({ error: 'Invalid project ID' });
+      const projectId = req.params.id;
+      if (!projectId) return res.status(400).json({ error: 'Invalid project ID' });
 
       await deleteProject(projectId, user.id);
       res.json({ message: 'Project deleted successfully' });
@@ -338,8 +338,8 @@ export function createApiRouter(): Router {
   router.post('/projects/:id/spec', async (req: AuthRequest, res: Response) => {
     try {
       const user = await resolveUser(req);
-      const projectId = parseInt(req.params.id, 10);
-      if (isNaN(projectId)) return res.status(400).json({ error: 'Invalid project ID' });
+      const projectId = req.params.id;
+      if (!projectId) return res.status(400).json({ error: 'Invalid project ID' });
 
       const project = await getProjectById(projectId, user.id);
       if (!project) return res.status(404).json({ error: 'Project not found' });
@@ -391,8 +391,8 @@ export function createApiRouter(): Router {
   router.get('/projects/:id/endpoints', async (req: AuthRequest, res: Response) => {
     try {
       const user = await resolveUser(req);
-      const projectId = parseInt(req.params.id, 10);
-      if (isNaN(projectId)) return res.status(400).json({ error: 'Invalid project ID' });
+      const projectId = req.params.id;
+      if (!projectId) return res.status(400).json({ error: 'Invalid project ID' });
 
       const project = await getProjectById(projectId, user.id);
       if (!project) return res.status(404).json({ error: 'Project not found' });
@@ -408,8 +408,8 @@ export function createApiRouter(): Router {
   router.post('/projects/:id/scan', async (req: AuthRequest, res: Response) => {
     try {
       const user = await resolveUser(req);
-      const projectId = parseInt(req.params.id, 10);
-      if (isNaN(projectId)) return res.status(400).json({ error: 'Invalid project ID' });
+      const projectId = req.params.id;
+      if (!projectId) return res.status(400).json({ error: 'Invalid project ID' });
 
       const project = await getProjectById(projectId, user.id);
       if (!project) return res.status(404).json({ error: 'Project not found' });
@@ -451,15 +451,14 @@ export function createApiRouter(): Router {
       // 5. Update scan record with score and metrics
       const completedScan = await updateScanRecord(scanRecord.id, {
         status: 'COMPLETED',
-        securityScore: scanResult.score.currentScore,
-        ratingGrade: scanResult.score.ratingGrade,
         totalEndpoints: scanResult.totalEndpoints,
-        endpointsScanned: scanResult.totalEndpoints,
+        scannedEndpoints: scanResult.totalEndpoints,
+        vulnerabilitiesCount: scanResult.findings.length,
         criticalCount: scanResult.summary.critical,
         highCount: scanResult.summary.high,
         mediumCount: scanResult.summary.medium,
         lowCount: scanResult.summary.low,
-        durationSeconds: scanResult.durationSeconds,
+        durationMs: Math.round(scanResult.durationSeconds * 1000),
         completedAt: new Date()
       });
 
@@ -500,8 +499,8 @@ export function createApiRouter(): Router {
   router.get('/projects/:id/scans', async (req: AuthRequest, res: Response) => {
     try {
       const user = await resolveUser(req);
-      const projectId = parseInt(req.params.id, 10);
-      if (isNaN(projectId)) return res.status(400).json({ error: 'Invalid project ID' });
+      const projectId = req.params.id;
+      if (!projectId) return res.status(400).json({ error: 'Invalid project ID' });
 
       const project = await getProjectById(projectId, user.id);
       if (!project) return res.status(404).json({ error: 'Project not found' });
@@ -517,8 +516,8 @@ export function createApiRouter(): Router {
   router.get('/projects/:id/vulnerabilities', async (req: AuthRequest, res: Response) => {
     try {
       const user = await resolveUser(req);
-      const projectId = parseInt(req.params.id, 10);
-      if (isNaN(projectId)) return res.status(400).json({ error: 'Invalid project ID' });
+      const projectId = req.params.id;
+      if (!projectId) return res.status(400).json({ error: 'Invalid project ID' });
 
       const project = await getProjectById(projectId, user.id);
       if (!project) return res.status(404).json({ error: 'Project not found' });
@@ -553,8 +552,8 @@ export function createApiRouter(): Router {
   router.get('/projects/:id/reports', async (req: AuthRequest, res: Response) => {
     try {
       const user = await resolveUser(req);
-      const projectId = parseInt(req.params.id, 10);
-      if (isNaN(projectId)) return res.status(400).json({ error: 'Invalid project ID' });
+      const projectId = req.params.id;
+      if (!projectId) return res.status(400).json({ error: 'Invalid project ID' });
 
       const project = await getProjectById(projectId, user.id);
       if (!project) return res.status(404).json({ error: 'Project not found' });

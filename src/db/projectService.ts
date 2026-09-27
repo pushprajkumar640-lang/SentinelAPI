@@ -224,7 +224,7 @@ export async function updateProject(
 }
 
 export async function saveApiSpec(
-  projectId: number,
+  projectId: string | number,
   title: string,
   version: string,
   description: string | undefined,
@@ -233,285 +233,852 @@ export async function saveApiSpec(
   rawSpec: string
 ) {
   try {
-    const result = await db
-      .insert(apiSpecs)
-      .values({
-        projectId,
+    const specId = `spec_${Date.now()}`;
+
+    const result = await db.execute(sql`
+      INSERT INTO public.api_specs
+        (
+          id,
+          project_id,
+          title,
+          version,
+          spec_type,
+          raw_spec,
+          created_at,
+          updated_at
+        )
+      VALUES
+        (
+          ${specId},
+          ${String(projectId)},
+          ${title},
+          ${version || '1.0.0'},
+          ${format === 'yaml' ? 'openapi' : 'openapi'},
+          ${rawSpec},
+          NOW(),
+          NOW()
+        )
+      RETURNING
+        id,
+        project_id AS "projectId",
         title,
         version,
-        description: description || null,
-        baseUrl: baseUrl || null,
-        format,
-        rawSpec
-      })
-      .returning();
-    return result[0];
+        raw_spec AS "rawSpec",
+        created_at AS "createdAt",
+        updated_at AS "updatedAt"
+    `);
+
+    return {
+      ...result.rows[0],
+      description: description || null,
+      baseUrl: baseUrl || null,
+      format
+    };
   } catch (error) {
     console.error('Error in saveApiSpec:', error);
     throw new Error('Failed to save API specification', { cause: error });
   }
 }
 
-export async function getLatestApiSpec(projectId: number) {
+export async function getLatestApiSpec(projectId: string | number) {
   try {
-    const result = await db
-      .select()
-      .from(apiSpecs)
-      .where(eq(apiSpecs.projectId, projectId))
-      .orderBy(desc(apiSpecs.createdAt))
-      .limit(1);
-    return result[0] || null;
+    const result = await db.execute(sql`
+      SELECT
+        id,
+        project_id AS "projectId",
+        title,
+        version,
+        raw_spec AS "rawSpec",
+        created_at AS "createdAt",
+        updated_at AS "updatedAt"
+      FROM public.api_specs
+      WHERE project_id = ${String(projectId)}
+      ORDER BY created_at DESC
+      LIMIT 1
+    `);
+
+    const row = result.rows[0];
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      ...row,
+      description: null,
+      baseUrl: null,
+      format: 'json'
+    };
   } catch (error) {
     console.error('Error in getLatestApiSpec:', error);
-    throw new Error('Failed to get latest API specification', { cause: error });
+    throw new Error('Failed to get latest API specification', {
+      cause: error
+    });
   }
 }
 
 export async function saveEndpoints(
-  projectId: number,
-  apiSpecId: number,
+  projectId: string | number,
+  apiSpecId: string | number,
   endpointList: ApiEndpoint[]
 ) {
   try {
-    // Clean out old endpoints for this project to maintain consistent inventory
-    await db.delete(endpoints).where(eq(endpoints.projectId, projectId));
+    await db.execute(sql`
+      DELETE FROM public.endpoints
+      WHERE project_id = ${String(projectId)}
+    `);
 
-    if (endpointList.length === 0) return [];
+    const savedEndpoints = [];
 
-    const values = endpointList.map((ep) => ({
-      apiSpecId,
-      projectId,
-      path: ep.path,
-      method: ep.method,
-      summary: ep.summary || null,
-      authenticationRequired: ep.requiresAuth || false,
-      parameters: ep.parameters ? JSON.stringify(ep.parameters) : null,
-      requestSchema: (ep.requestBodySchema || (ep as any).requestSchema) ? JSON.stringify(ep.requestBodySchema || (ep as any).requestSchema) : null,
-      responseSchema: ep.responseSchema ? JSON.stringify(ep.responseSchema) : null,
-      riskLevel: (ep.riskLevel as 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL') || 'LOW'
-    }));
+    for (const endpoint of endpointList) {
+      const endpointId = `endpoint_${Date.now()}_${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
 
-    return await db.insert(endpoints).values(values).returning();
+      const result = await db.execute(sql`
+        INSERT INTO public.endpoints
+          (
+            id,
+            project_id,
+            api_spec_id,
+            path,
+            method,
+            summary,
+            description,
+            headers_json,
+            parameters_json,
+            request_body_json,
+            responses_json,
+            auth_required,
+            risk_score,
+            created_at
+          )
+        VALUES
+          (
+            ${endpointId},
+            ${String(projectId)},
+            ${String(apiSpecId)},
+            ${endpoint.path || ''},
+            ${String(endpoint.method || 'GET').toUpperCase()},
+            ${endpoint.summary || null},
+            ${endpoint.description || null},
+            ${JSON.stringify(endpoint.headers || {})},
+            ${JSON.stringify(endpoint.parameters || [])},
+            ${JSON.stringify(endpoint.requestBodySchema || null)},
+            ${JSON.stringify(endpoint.responseSchema || null)},
+            ${endpoint.requiresAuth !== false},
+            ${Number(endpoint.riskLevel || 0)},
+            NOW()
+          )
+        RETURNING
+          id,
+          project_id AS "projectId",
+          api_spec_id AS "apiSpecId",
+          path,
+          method,
+          summary,
+          description,
+          headers_json AS "headers",
+          parameters_json AS "parameters",
+          request_body_json AS "requestBodySchema",
+          responses_json AS "responseSchema",
+          auth_required AS "requiresAuth",
+          risk_score AS "riskLevel",
+          created_at AS "createdAt"
+      `);
+
+      if (result.rows[0]) {
+        savedEndpoints.push(result.rows[0]);
+      }
+    }
+
+    return savedEndpoints;
   } catch (error) {
     console.error('Error in saveEndpoints:', error);
-    throw new Error('Failed to save discovered endpoints', { cause: error });
+    throw new Error('Failed to save endpoints', { cause: error });
   }
 }
 
-export async function getProjectEndpoints(projectId: number): Promise<ApiEndpoint[]> {
+export async function getProjectEndpoints(
+  projectId: string | number
+): Promise<ApiEndpoint[]> {
   try {
-    const rows = await db
-      .select()
-      .from(endpoints)
-      .where(eq(endpoints.projectId, projectId));
+    const result = await db.execute(sql`
+      SELECT
+        id,
+        project_id AS "projectId",
+        api_spec_id AS "apiSpecId",
+        path,
+        method,
+        summary,
+        description,
+        headers_json AS "headers",
+        parameters_json AS "parameters",
+        request_body_json AS "requestBodySchema",
+        responses_json AS "responseSchema",
+        auth_required AS "requiresAuth",
+        risk_score AS "riskLevel",
+        created_at AS "createdAt"
+      FROM public.endpoints
+      WHERE project_id = ${String(projectId)}
+      ORDER BY created_at ASC
+    `);
 
-    return rows.map((r) => ({
-      id: String(r.id),
-      path: r.path,
-      method: r.method as any,
-      summary: r.summary || '',
-      requiresAuth: r.authenticationRequired,
-      riskLevel: r.riskLevel as any,
-      parameters: r.parameters ? JSON.parse(r.parameters) : [],
-      requestBodySchema: r.requestSchema || undefined,
-      responseSchema: r.responseSchema || undefined,
-      findingsCount: 0,
-      status: 'SCANNED' as const
+    return result.rows.map((row: any) => ({
+      id: String(row.id),
+      path: row.path || '',
+      method: row.method || 'GET',
+      summary: row.summary || '',
+      description: row.description || '',
+      headers: row.headers || {},
+      parameters: row.parameters || [],
+      requestBodySchema: row.requestBodySchema || null,
+      responseSchema: row.responseSchema || null,
+      requiresAuth: row.requiresAuth !== false,
+      riskLevel: Number(row.riskLevel || 0)
     }));
   } catch (error) {
     console.error('Error in getProjectEndpoints:', error);
-    throw new Error('Failed to fetch project endpoints', { cause: error });
+    throw new Error('Failed to get project endpoints', {
+      cause: error
+    });
   }
 }
 
-export async function createScanRecord(projectId: number, userId: number) {
+export async function createScanRecord(
+  projectId: string | number,
+  userId: string | number
+) {
   try {
-    const scanId = `SCAN-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 1000)}`;
-    const result = await db
-      .insert(scans)
-      .values({
-        scanId,
-        projectId,
-        userId,
-        status: 'QUEUED',
-        startedAt: new Date(),
-        createdAt: new Date()
-      })
-      .returning();
-    return result[0];
+    const scanId = `scan_${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+
+    const projectResult = await db.execute(sql`
+      SELECT target_base_url
+      FROM public.projects
+      WHERE id = ${String(projectId)}
+      LIMIT 1
+    `);
+
+    const targetUrl = projectResult.rows[0]?.target_base_url || '';
+
+    const result = await db.execute(sql`
+      INSERT INTO public.scans
+        (
+          id,
+          project_id,
+          user_id,
+          name,
+          status,
+          scan_type,
+          target_url,
+          total_endpoints,
+          scanned_endpoints,
+          vulnerabilities_count,
+          critical_count,
+          high_count,
+          medium_count,
+          low_count,
+          created_at
+        )
+      VALUES
+        (
+          ${scanId},
+          ${String(projectId)},
+          ${String(userId)},
+          ${`Security Scan ${new Date().toLocaleString()}`},
+          'pending',
+          'owasp_top10',
+          ${targetUrl},
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          NOW()
+        )
+      RETURNING
+        id,
+        project_id AS "projectId",
+        user_id AS "userId",
+        name,
+        status,
+        scan_type AS "scanType",
+        target_url AS "targetUrl",
+        total_endpoints AS "totalEndpoints",
+        scanned_endpoints AS "scannedEndpoints",
+        vulnerabilities_count AS "vulnerabilitiesCount",
+        critical_count AS "criticalCount",
+        high_count AS "highCount",
+        medium_count AS "mediumCount",
+        low_count AS "lowCount",
+        started_at AS "startedAt",
+        completed_at AS "completedAt",
+        duration_ms AS "durationMs",
+        created_at AS "createdAt"
+    `);
+
+    const row = result.rows[0];
+
+    return {
+      ...row,
+      scanId: row.id,
+      securityScore: 0,
+      ratingGrade: 'N/A'
+    };
   } catch (error) {
     console.error('Error in createScanRecord:', error);
-    throw new Error('Failed to create scan record', { cause: error });
+    throw new Error('Failed to create scan record', {
+      cause: error
+    });
   }
 }
 
-export async function updateScanRecord(scanDbId: number, updates: Partial<typeof scans.$inferInsert>) {
+export async function updateScanRecord(
+  scanDbId: string | number,
+  updates: any
+) {
   try {
-    const result = await db
-      .update(scans)
-      .set(updates)
-      .where(eq(scans.id, scanDbId))
-      .returning();
-    return result[0];
+    const setParts: any[] = [];
+
+    if (updates.status !== undefined) {
+      const statusMap: Record<string, string> = {
+        QUEUED: 'pending',
+        PENDING: 'pending',
+        RUNNING: 'running',
+        COMPLETED: 'completed',
+        FAILED: 'failed'
+      };
+
+      setParts.push(
+        sql`status = ${statusMap[String(updates.status).toUpperCase()] || String(updates.status).toLowerCase()}`
+      );
+    }
+
+    if (updates.totalEndpoints !== undefined) {
+      setParts.push(sql`total_endpoints = ${Number(updates.totalEndpoints)}`);
+    }
+
+    if (updates.scannedEndpoints !== undefined) {
+      setParts.push(sql`scanned_endpoints = ${Number(updates.scannedEndpoints)}`);
+    }
+
+    if (updates.vulnerabilitiesCount !== undefined) {
+      setParts.push(
+        sql`vulnerabilities_count = ${Number(updates.vulnerabilitiesCount)}`
+      );
+    }
+
+    if (updates.criticalCount !== undefined) {
+      setParts.push(sql`critical_count = ${Number(updates.criticalCount)}`);
+    }
+
+    if (updates.highCount !== undefined) {
+      setParts.push(sql`high_count = ${Number(updates.highCount)}`);
+    }
+
+    if (updates.mediumCount !== undefined) {
+      setParts.push(sql`medium_count = ${Number(updates.mediumCount)}`);
+    }
+
+    if (updates.lowCount !== undefined) {
+      setParts.push(sql`low_count = ${Number(updates.lowCount)}`);
+    }
+
+    if (updates.startedAt !== undefined) {
+      setParts.push(sql`started_at = ${updates.startedAt}`);
+    }
+
+    if (updates.completedAt !== undefined) {
+      setParts.push(sql`completed_at = ${updates.completedAt}`);
+    }
+
+    if (updates.durationMs !== undefined) {
+      setParts.push(sql`duration_ms = ${Number(updates.durationMs)}`);
+    }
+
+    if (setParts.length === 0) {
+      return null;
+    }
+
+    const setClause = sql.join(setParts, sql`, `);
+
+    const result = await db.execute(sql`
+      UPDATE public.scans
+      SET ${setClause}
+      WHERE id = ${String(scanDbId)}
+      RETURNING
+        id,
+        project_id AS "projectId",
+        user_id AS "userId",
+        name,
+        status,
+        scan_type AS "scanType",
+        target_url AS "targetUrl",
+        total_endpoints AS "totalEndpoints",
+        scanned_endpoints AS "scannedEndpoints",
+        vulnerabilities_count AS "vulnerabilitiesCount",
+        critical_count AS "criticalCount",
+        high_count AS "highCount",
+        medium_count AS "mediumCount",
+        low_count AS "lowCount",
+        started_at AS "startedAt",
+        completed_at AS "completedAt",
+        duration_ms AS "durationMs",
+        created_at AS "createdAt"
+    `);
+
+    const row = result.rows[0];
+
+    if (!row) {
+      return null;
+    }
+
+    const critical = Number(row.criticalCount || 0);
+    const high = Number(row.highCount || 0);
+    const medium = Number(row.mediumCount || 0);
+
+    const securityScore =
+      critical > 0 ? 25 :
+      high > 0 ? 50 :
+      medium > 0 ? 75 :
+      100;
+
+    return {
+      ...row,
+      scanId: row.id,
+      securityScore,
+      ratingGrade:
+        securityScore >= 90 ? 'A' :
+        securityScore >= 75 ? 'B' :
+        securityScore >= 50 ? 'C' :
+        securityScore >= 25 ? 'D' : 'F'
+    };
   } catch (error) {
     console.error('Error in updateScanRecord:', error);
-    throw new Error('Failed to update scan record', { cause: error });
+    throw new Error('Failed to update scan record', {
+      cause: error
+    });
   }
 }
 
 export async function saveVulnerabilities(
-  scanDbId: number,
-  projectId: number,
+  scanDbId: string | number,
+  projectId: string | number,
   findings: VulnerabilityFinding[]
 ) {
   try {
-    if (findings.length === 0) return [];
+    const saved = [];
 
-    // Query endpoints to map endpoint path to endpoint ID
-    const dbEndpoints = await db
-      .select({ id: endpoints.id, path: endpoints.path })
-      .from(endpoints)
-      .where(eq(endpoints.projectId, projectId));
+    for (const finding of findings) {
+      const vulnerabilityId = `vuln_${Date.now()}_${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
 
-    const pathMap = new Map<string, number>();
-    dbEndpoints.forEach((e) => pathMap.set(e.path, e.id));
+      const severity = String(finding.severity || 'LOW').toUpperCase();
 
-    const values = findings.map((f) => ({
-      vulnId: f.id,
-      scanId: scanDbId,
-      projectId,
-      endpointId: pathMap.get(f.endpoint) || null,
-      title: f.title,
-      category: f.category,
-      severity: f.severity,
-      owaspCategory: f.owaspCategory || null,
-      endpoint: f.endpoint,
-      method: f.method,
-      description: f.description,
-      evidence: f.evidence,
-      reproduction: JSON.stringify(f.reproduction),
-      impact: f.impact,
-      remediation: JSON.stringify(f.remediation),
-      aiExplanation: f.aiExplanation || null,
-      status: f.status || 'OPEN',
-      detectedAt: new Date()
-    }));
+      const endpointInfo = {
+        endpoint: finding.endpoint || '',
+        method: finding.method || '',
+        evidence: finding.evidence || ''
+      };
 
-    return await db.insert(vulnerabilities).values(values).returning();
-  } catch (error) {
-    console.error('Error in saveVulnerabilities:', error);
-    throw new Error('Failed to save vulnerability findings to database', { cause: error });
-  }
-}
+      const result = await db.execute(sql`
+        INSERT INTO public.vulnerabilities
+          (
+            id,
+            scan_id,
+            project_id,
+            endpoint_id,
+            title,
+            severity,
+            owasp_category,
+            cwe_id,
+            cvss_score,
+            description,
+            evidence_request,
+            evidence_response,
+            reproduction_steps,
+            remediation,
+            ai_analysis,
+            status,
+            created_at
+          )
+        VALUES
+          (
+            ${vulnerabilityId},
+            ${String(scanDbId)},
+            ${String(projectId)},
+            NULL,
+            ${finding.title || 'Security Vulnerability'},
+            ${severity},
+            ${finding.category || null},
+            ${finding.cwe || null},
+            ${finding.cvssScore != null ? Number(finding.cvssScore) : null},
+            ${finding.description || ''},
+            ${JSON.stringify(endpointInfo)},
+            NULL,
+            ${JSON.stringify(finding.reproduction || [])},
+            ${JSON.stringify(finding.remediation || '')},
+            ${JSON.stringify(finding.aiExplanation || '')},
+            'open',
+            NOW()
+          )
+        RETURNING
+          id,
+          scan_id AS "scanId",
+          project_id AS "projectId",
+          title,
+          severity,
+          owasp_category AS "owaspCategory",
+          cwe_id AS "cweId",
+          cvss_score AS "cvssScore",
+          description,
+          evidence_request AS "evidenceRequest",
+          reproduction_steps AS "reproductionSteps",
+          remediation,
+          ai_analysis AS "aiAnalysis",
+          status,
+          created_at AS "createdAt"
+      `);
 
-export async function getProjectScans(projectId: number) {
-  try {
-    return await db
-      .select()
-      .from(scans)
-      .where(eq(scans.projectId, projectId))
-      .orderBy(desc(scans.startedAt));
-  } catch (error) {
-    console.error('Error in getProjectScans:', error);
-    throw new Error('Failed to fetch scans', { cause: error });
-  }
-}
-
-export async function getProjectVulnerabilities(projectId: number, scanDbId?: number): Promise<VulnerabilityFinding[]> {
-  try {
-    const conditions = [eq(vulnerabilities.projectId, projectId)];
-    if (scanDbId) {
-      conditions.push(eq(vulnerabilities.scanId, scanDbId));
+      if (result.rows[0]) {
+        saved.push(result.rows[0]);
+      }
     }
 
-    const rows = await db
-      .select()
-      .from(vulnerabilities)
-      .where(and(...conditions))
-      .orderBy(desc(vulnerabilities.detectedAt));
+    return saved;
+  } catch (error) {
+    console.error('Error in saveVulnerabilities:', error);
+    throw new Error('Failed to save vulnerabilities', {
+      cause: error
+    });
+  }
+}
 
-    return rows.map((r) => ({
-      id: r.vulnId,
-      dbId: r.id,
-      title: r.title,
-      category: r.category as any,
-      severity: r.severity as any,
-      owaspCategory: r.owaspCategory || '',
-      endpoint: r.endpoint,
-      method: r.method as any,
-      description: r.description,
-      evidence: r.evidence,
-      reproduction: JSON.parse(r.reproduction),
-      impact: r.impact,
-      remediation: JSON.parse(r.remediation),
-      aiExplanation: r.aiExplanation || undefined,
-      status: r.status as any,
-      detectedAt: r.detectedAt.toISOString().replace('T', ' ').substring(0, 19) + ' UTC'
-    }));
+export async function getProjectScans(projectId: string | number) {
+  try {
+    const result = await db.execute(sql`
+      SELECT
+        id,
+        project_id AS "projectId",
+        user_id AS "userId",
+        name,
+        status,
+        scan_type AS "scanType",
+        target_url AS "targetUrl",
+        total_endpoints AS "totalEndpoints",
+        scanned_endpoints AS "scannedEndpoints",
+        vulnerabilities_count AS "vulnerabilitiesCount",
+        critical_count AS "criticalCount",
+        high_count AS "highCount",
+        medium_count AS "mediumCount",
+        low_count AS "lowCount",
+        started_at AS "startedAt",
+        completed_at AS "completedAt",
+        duration_ms AS "durationMs",
+        created_at AS "createdAt"
+      FROM public.scans
+      WHERE project_id = ${String(projectId)}
+      ORDER BY created_at DESC
+    `);
+
+    return result.rows.map((row: any) => {
+      const critical = Number(row.criticalCount || 0);
+      const high = Number(row.highCount || 0);
+      const medium = Number(row.mediumCount || 0);
+
+      const securityScore =
+        critical > 0 ? 25 :
+        high > 0 ? 50 :
+        medium > 0 ? 75 :
+        100;
+
+      return {
+        ...row,
+        scanId: String(row.id),
+        securityScore,
+        ratingGrade:
+          securityScore >= 90 ? 'A' :
+          securityScore >= 75 ? 'B' :
+          securityScore >= 50 ? 'C' :
+          securityScore >= 25 ? 'D' : 'F'
+      };
+    });
+  } catch (error) {
+    console.error('Error in getProjectScans:', error);
+    throw new Error('Failed to get project scans', {
+      cause: error
+    });
+  }
+}
+
+export async function getProjectVulnerabilities(
+  projectId: string | number,
+  scanDbId?: string | number
+) {
+  try {
+    const result = await db.execute(sql`
+      SELECT
+        v.id,
+        v.scan_id AS "scanId",
+        v.project_id AS "projectId",
+        v.title,
+        v.severity,
+        v.owasp_category AS "owaspCategory",
+        v.cwe_id AS "cweId",
+        v.cvss_score AS "cvssScore",
+        v.description,
+        v.evidence_request AS "evidenceRequest",
+        v.reproduction_steps AS "reproductionSteps",
+        v.remediation,
+        v.ai_analysis AS "aiAnalysis",
+        v.status,
+        v.created_at AS "createdAt"
+      FROM public.vulnerabilities v
+      WHERE v.project_id = ${String(projectId)}
+        ${
+          scanDbId !== undefined
+            ? sql`AND v.scan_id = ${String(scanDbId)}`
+            : sql``
+        }
+      ORDER BY v.created_at DESC
+    `);
+
+    return result.rows.map((row: any) => {
+      let endpoint = '';
+      let method = 'GET';
+      let evidence = '';
+
+      try {
+        const info =
+          typeof row.evidenceRequest === 'string'
+            ? JSON.parse(row.evidenceRequest)
+            : row.evidenceRequest || {};
+
+        endpoint = info.endpoint || '';
+        method = info.method || 'GET';
+        evidence = info.evidence || '';
+      } catch {
+        evidence = row.evidenceRequest || '';
+      }
+
+      let reproduction: any[] = [];
+      try {
+        reproduction =
+          typeof row.reproductionSteps === 'string'
+            ? JSON.parse(row.reproductionSteps)
+            : row.reproductionSteps || [];
+      } catch {
+        reproduction = [];
+      }
+
+      let remediation = '';
+      try {
+        remediation =
+          typeof row.remediation === 'string'
+            ? JSON.parse(row.remediation)
+            : row.remediation || '';
+      } catch {
+        remediation = row.remediation || '';
+      }
+
+      let aiExplanation = '';
+      try {
+        aiExplanation =
+          typeof row.aiAnalysis === 'string'
+            ? JSON.parse(row.aiAnalysis)
+            : row.aiAnalysis || '';
+      } catch {
+        aiExplanation = row.aiAnalysis || '';
+      }
+
+      return {
+        id: String(row.id),
+        scanId: String(row.scanId),
+        projectId: String(row.projectId),
+        title: row.title || 'Security Vulnerability',
+        severity: row.severity || 'LOW',
+        category: row.owaspCategory || '',
+        owaspCategory: row.owaspCategory || '',
+        cwe: row.cweId || '',
+        cweId: row.cweId || '',
+        cvssScore:
+          row.cvssScore != null ? Number(row.cvssScore) : null,
+        description: row.description || '',
+        endpoint,
+        method,
+        evidence,
+        reproduction,
+        remediation,
+        aiExplanation,
+        status: row.status || 'open',
+        createdAt: row.createdAt
+      };
+    });
   } catch (error) {
     console.error('Error in getProjectVulnerabilities:', error);
-    throw new Error('Failed to fetch vulnerabilities', { cause: error });
+    throw new Error('Failed to get project vulnerabilities', {
+      cause: error
+    });
   }
 }
 
-export async function updateVulnerabilityStatus(vulnIdStr: string, status: 'OPEN' | 'RESOLVED', userId: number) {
+export async function updateVulnerabilityStatus(
+  vulnIdStr: string,
+  status: 'open' | 'resolved' | 'false_positive',
+  userId: string | number
+) {
   try {
-    const owned = await db
-      .select({ id: vulnerabilities.id })
-      .from(vulnerabilities)
-      .innerJoin(projects, eq(vulnerabilities.projectId, projects.id))
-      .where(and(eq(vulnerabilities.vulnId, vulnIdStr), eq(projects.userId, userId)))
-      .limit(1);
-    if (!owned[0]) return null;
-    const result = await db
-      .update(vulnerabilities)
-      .set({ status })
-      .where(eq(vulnerabilities.vulnId, vulnIdStr))
-      .returning();
-    return result[0];
+    const result = await db.execute(sql`
+      UPDATE public.vulnerabilities v
+      SET status = ${status}
+      FROM public.projects p
+      WHERE v.id = ${String(vulnIdStr)}
+        AND v.project_id = p.id
+        AND p.user_id = ${String(userId)}
+      RETURNING
+        v.id,
+        v.scan_id AS "scanId",
+        v.project_id AS "projectId",
+        v.title,
+        v.severity,
+        v.owasp_category AS "owaspCategory",
+        v.cwe_id AS "cweId",
+        v.cvss_score AS "cvssScore",
+        v.description,
+        v.status,
+        v.created_at AS "createdAt"
+    `);
+
+    return result.rows[0] || null;
   } catch (error) {
     console.error('Error in updateVulnerabilityStatus:', error);
-    throw new Error('Failed to update vulnerability status', { cause: error });
+    throw new Error('Failed to update vulnerability status', {
+      cause: error
+    });
   }
 }
 
-export async function saveReport(projectId: number, scanId: number, title: string, reportData: any) {
+export async function saveReport(
+  projectId: string | number,
+  scanId: string | number,
+  title: string,
+  reportData: any
+) {
   try {
-    const result = await db
-      .insert(reports)
-      .values({
-        projectId,
-        scanId,
+    const reportId = `report_${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+
+    const summary =
+      reportData?.summary ||
+      reportData?.executiveSummary ||
+      '';
+
+    const executiveSummary =
+      reportData?.executiveSummary ||
+      reportData?.summary ||
+      '';
+
+    const result = await db.execute(sql`
+      INSERT INTO public.reports
+        (
+          id,
+          project_id,
+          scan_id,
+          user_id,
+          title,
+          summary,
+          executive_summary,
+          format,
+          report_data_json,
+          generated_at,
+          created_at
+        )
+      SELECT
+        ${reportId},
+        p.id,
+        ${String(scanId)},
+        p.user_id,
+        ${title},
+        ${summary},
+        ${executiveSummary},
+        'json',
+        ${JSON.stringify(reportData || {})},
+        NOW(),
+        NOW()
+      FROM public.projects p
+      WHERE p.id = ${String(projectId)}
+      RETURNING
+        id,
+        project_id AS "projectId",
+        scan_id AS "scanId",
+        user_id AS "userId",
         title,
-        reportData: JSON.stringify(reportData),
-        generatedAt: new Date()
-      })
-      .returning();
-    return result[0];
+        summary,
+        executive_summary AS "executiveSummary",
+        format,
+        report_data_json AS "reportData",
+        generated_at AS "generatedAt",
+        created_at AS "createdAt"
+    `);
+
+    const row = result.rows[0];
+
+    if (!row) {
+      throw new Error('Project not found');
+    }
+
+    return {
+      ...row,
+      reportData:
+        typeof row.reportData === 'string'
+          ? JSON.parse(row.reportData)
+          : row.reportData || {}
+    };
   } catch (error) {
     console.error('Error in saveReport:', error);
-    throw new Error('Failed to save audit report', { cause: error });
+    throw new Error('Failed to save report', {
+      cause: error
+    });
   }
 }
 
-export async function getProjectReports(projectId: number) {
+export async function getProjectReports(projectId: string | number) {
   try {
-    const rows = await db
-      .select()
-      .from(reports)
-      .where(eq(reports.projectId, projectId))
-      .orderBy(desc(reports.generatedAt));
+    const result = await db.execute(sql`
+      SELECT
+        id,
+        project_id AS "projectId",
+        scan_id AS "scanId",
+        user_id AS "userId",
+        title,
+        summary,
+        executive_summary AS "executiveSummary",
+        format,
+        report_data_json AS "reportData",
+        generated_at AS "generatedAt",
+        created_at AS "createdAt"
+      FROM public.reports
+      WHERE project_id = ${String(projectId)}
+      ORDER BY created_at DESC
+    `);
 
-    return rows.map((r) => ({
-      id: r.id,
-      projectId: r.projectId,
-      scanId: r.scanId,
-      title: r.title,
-      reportData: JSON.parse(r.reportData),
-      generatedAt: r.generatedAt
+    return result.rows.map((row: any) => ({
+      ...row,
+      reportData:
+        typeof row.reportData === 'string'
+          ? JSON.parse(row.reportData)
+          : row.reportData || {}
     }));
   } catch (error) {
     console.error('Error in getProjectReports:', error);
-    throw new Error('Failed to fetch reports', { cause: error });
+    throw new Error('Failed to get project reports', {
+      cause: error
+    });
   }
 }
