@@ -11,37 +11,59 @@ import {
 import { eq, desc, and, avg, count, sql } from 'drizzle-orm';
 import { ApiEndpoint, VulnerabilityFinding, SecurityScoreBreakdown } from '../types/security';
 
-export async function getDashboardSummary(userId: number) {
-  const [scanSummary, findingSummary] = await Promise.all([
-    db
-      .select({
-        scansCount: count(scans.id),
-        averageScore: avg(scans.securityScore)
-      })
-      .from(scans)
-      .where(and(eq(scans.userId, userId), eq(scans.status, 'COMPLETED'))),
-    db
-      .select({
-        vulnerabilitiesCount: count(vulnerabilities.id),
-        criticalCount: sql<number>`count(*) filter (where ${vulnerabilities.severity} = 'CRITICAL')`,
-        highCount: sql<number>`count(*) filter (where ${vulnerabilities.severity} = 'HIGH')`,
-        mediumCount: sql<number>`count(*) filter (where ${vulnerabilities.severity} = 'MEDIUM')`,
-        lowCount: sql<number>`count(*) filter (where ${vulnerabilities.severity} = 'LOW')`
-      })
-      .from(vulnerabilities)
-      .innerJoin(projects, eq(vulnerabilities.projectId, projects.id))
-      .where(eq(projects.userId, userId))
-  ]);
+export async function getDashboardSummary(userId: string | number) {
+  try {
+    const result = await db.execute(sql`
+      SELECT
+        COUNT(DISTINCT s.id) FILTER (WHERE s.status = 'completed') AS "scansCount",
+        COALESCE(AVG(
+          CASE
+            WHEN s.status = 'completed' THEN
+              CASE
+                WHEN s.critical_count > 0 THEN 25
+                WHEN s.high_count > 0 THEN 50
+                WHEN s.medium_count > 0 THEN 75
+                ELSE 100
+              END
+          END
+        ), 0) AS "averageScore",
+        COUNT(v.id) AS "vulnerabilitiesCount",
+        COUNT(v.id) FILTER (WHERE UPPER(v.severity) = 'CRITICAL') AS "criticalCount",
+        COUNT(v.id) FILTER (WHERE UPPER(v.severity) = 'HIGH') AS "highCount",
+        COUNT(v.id) FILTER (WHERE UPPER(v.severity) = 'MEDIUM') AS "mediumCount",
+        COUNT(v.id) FILTER (WHERE UPPER(v.severity) = 'LOW') AS "lowCount"
+      FROM public.projects p
+      LEFT JOIN public.scans s
+        ON s.project_id = p.id
+      LEFT JOIN public.vulnerabilities v
+        ON v.project_id = p.id
+      WHERE p.user_id = ${String(userId)}
+    `);
 
-  return {
-    scansCount: Number(scanSummary[0]?.scansCount || 0),
-    averageScore: Math.round(Number(scanSummary[0]?.averageScore || 0)),
-    vulnerabilitiesCount: Number(findingSummary[0]?.vulnerabilitiesCount || 0),
-    criticalCount: Number(findingSummary[0]?.criticalCount || 0),
-    highCount: Number(findingSummary[0]?.highCount || 0),
-    mediumCount: Number(findingSummary[0]?.mediumCount || 0),
-    lowCount: Number(findingSummary[0]?.lowCount || 0)
-  };
+    const row = result.rows[0] || {};
+
+    return {
+      scansCount: Number(row.scansCount || 0),
+      averageScore: Math.round(Number(row.averageScore || 0)),
+      vulnerabilitiesCount: Number(row.vulnerabilitiesCount || 0),
+      criticalCount: Number(row.criticalCount || 0),
+      highCount: Number(row.highCount || 0),
+      mediumCount: Number(row.mediumCount || 0),
+      lowCount: Number(row.lowCount || 0)
+    };
+  } catch (error) {
+    console.error('Error in getDashboardSummary:', error);
+
+    return {
+      scansCount: 0,
+      averageScore: 0,
+      vulnerabilitiesCount: 0,
+      criticalCount: 0,
+      highCount: 0,
+      mediumCount: 0,
+      lowCount: 0
+    };
+  }
 }
 
 export async function getUserProjects(userId: string) {
