@@ -46,10 +46,21 @@ async function resolveUser(req: AuthRequest) {
   return req.dbUser;
 }
 
-function issueToken(user: { uid: string; email: string; displayName: string | null }) {
-  if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET is not configured');
+function issueToken(user: {
+  uid: string;
+  email: string;
+  displayName: string | null;
+}) {
+  if (!process.env.JWT_SECRET) {
+    throw new Error('JWT_SECRET is not configured');
+  }
+
   return jwt.sign(
-    { uid: user.uid, email: user.email, name: user.displayName || undefined },
+    {
+      uid: user.uid,
+      email: user.email,
+      name: user.displayName || undefined
+    },
     process.env.JWT_SECRET,
     { expiresIn: '7d' }
   );
@@ -61,7 +72,13 @@ function sessionExpiry() {
   return new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
 }
 
-function publicUser(user: { id: number; uid: string; email: string; displayName: string | null; photoUrl?: string | null }) {
+function publicUser(user: {
+  id: string | number;
+  uid: string;
+  email: string;
+  displayName: string | null;
+  photoUrl?: string | null;
+}) {
   return {
     id: user.id,
     uid: user.uid,

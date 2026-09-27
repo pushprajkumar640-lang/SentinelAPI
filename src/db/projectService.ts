@@ -44,67 +44,119 @@ export async function getDashboardSummary(userId: number) {
   };
 }
 
-export async function getUserProjects(userId: number) {
-  try {
-    return await db
-      .select()
-      .from(projects)
-      .where(eq(projects.userId, userId))
-      .orderBy(desc(projects.createdAt));
-  } catch (error) {
-    console.error('Error in getUserProjects:', error);
-    throw new Error('Failed to fetch user projects', { cause: error });
-  }
+export async function getUserProjects(userId: string) {
+  const result = await db.execute(sql`
+    SELECT
+      id,
+      user_id AS "userId",
+      name,
+      description,
+      target_base_url AS "apiUrl",
+      false AS "isDemo",
+      created_at AS "createdAt",
+      updated_at AS "updatedAt"
+    FROM public.projects
+    WHERE user_id = ${userId}
+    ORDER BY created_at DESC
+  `);
+
+  return result.rows;
 }
 
 export async function createProject(
-  userId: number,
+  userId: string | number,
   name: string,
   description?: string,
   apiUrl?: string,
   isDemo = false
 ) {
   try {
-    const result = await db
-      .insert(projects)
-      .values({
-        userId,
+    const projectId = `project_${Date.now()}`;
+
+    const result = await db.execute(sql`
+      INSERT INTO public.projects
+        (
+          id,
+          user_id,
+          name,
+          description,
+          target_base_url,
+          environment,
+          auth_type,
+          created_at,
+          updated_at
+        )
+      VALUES
+        (
+          ${projectId},
+          ${String(userId)},
+          ${name.trim()},
+          ${description?.trim() || null},
+          ${apiUrl?.trim() || ''},
+          'staging',
+          'bearer',
+          NOW(),
+          NOW()
+        )
+      RETURNING
+        id,
+        user_id AS "userId",
         name,
-        description: description || null,
-        apiUrl: apiUrl || null,
-        isDemo
-      })
-      .returning();
-    return result[0];
+        description,
+        target_base_url AS "apiUrl",
+        false AS "isDemo",
+        created_at AS "createdAt",
+        updated_at AS "updatedAt"
+    `);
+
+    return result.rows[0];
   } catch (error) {
     console.error('Error in createProject:', error);
     throw new Error('Failed to create project', { cause: error });
   }
 }
 
-export async function getProjectById(projectId: number, userId?: number) {
+export async function getProjectById(
+  projectId: string | number,
+  userId?: string | number
+) {
   try {
-    const conditions = [eq(projects.id, projectId)];
-    if (userId) {
-      conditions.push(eq(projects.userId, userId));
-    }
-    const result = await db
-      .select()
-      .from(projects)
-      .where(and(...conditions))
-      .limit(1);
-    return result[0] || null;
+    const result = await db.execute(sql`
+      SELECT
+        id,
+        user_id AS "userId",
+        name,
+        description,
+        target_base_url AS "apiUrl",
+        false AS "isDemo",
+        created_at AS "createdAt",
+        updated_at AS "updatedAt"
+      FROM public.projects
+      WHERE id = ${String(projectId)}
+        ${userId !== undefined
+          ? sql`AND user_id = ${String(userId)}`
+          : sql``}
+      LIMIT 1
+    `);
+
+    return result.rows[0] || null;
   } catch (error) {
     console.error('Error in getProjectById:', error);
     throw new Error('Failed to get project', { cause: error });
   }
 }
 
-export async function deleteProject(projectId: number, userId: number) {
+export async function deleteProject(
+  projectId: string | number,
+  userId: string | number
+) {
   try {
-    await db
-      .delete(projects)
-      .where(and(eq(projects.id, projectId), eq(projects.userId, userId)));
+    await db.execute(sql`
+      DELETE FROM public.projects
+      WHERE id = ${String(projectId)}
+        AND user_id = ${String(userId)}
+    `);
+
     return true;
   } catch (error) {
     console.error('Error in deleteProject:', error);
@@ -113,20 +165,40 @@ export async function deleteProject(projectId: number, userId: number) {
 }
 
 export async function updateProject(
-  projectId: number,
-  userId: number,
-  values: { name?: string; description?: string; apiUrl?: string }
+  projectId: string | number,
+  userId: string | number,
+  values: {
+    name?: string;
+    description?: string;
+    apiUrl?: string;
+  }
 ) {
-  const result = await db.update(projects)
-    .set({
-      ...(values.name !== undefined ? { name: values.name.trim() } : {}),
-      ...(values.description !== undefined ? { description: values.description.trim() || null } : {}),
-      ...(values.apiUrl !== undefined ? { apiUrl: values.apiUrl.trim() || null } : {}),
-      updatedAt: new Date()
-    })
-    .where(and(eq(projects.id, projectId), eq(projects.userId, userId)))
-    .returning();
-  return result[0] || null;
+  try {
+    const result = await db.execute(sql`
+      UPDATE public.projects
+      SET
+        name = COALESCE(${values.name?.trim() || null}, name),
+        description = COALESCE(${values.description?.trim() || null}, description),
+        target_base_url = COALESCE(${values.apiUrl?.trim() || null}, target_base_url),
+        updated_at = NOW()
+      WHERE id = ${String(projectId)}
+        AND user_id = ${String(userId)}
+      RETURNING
+        id,
+        user_id AS "userId",
+        name,
+        description,
+        target_base_url AS "apiUrl",
+        false AS "isDemo",
+        created_at AS "createdAt",
+        updated_at AS "updatedAt"
+    `);
+
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error in updateProject:', error);
+    throw new Error('Failed to update project', { cause: error });
+  }
 }
 
 export async function saveApiSpec(
