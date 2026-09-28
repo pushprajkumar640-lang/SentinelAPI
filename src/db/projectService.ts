@@ -233,7 +233,19 @@ export async function saveApiSpec(
   rawSpec: string
 ) {
   try {
-    const specId = `spec_${Date.now()}`;
+    const specId = `spec_${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+
+    let contentJson: unknown;
+
+    try {
+      contentJson = JSON.parse(rawSpec);
+    } catch {
+      contentJson = {
+        raw: rawSpec
+      };
+    }
 
     const result = await db.execute(sql`
       INSERT INTO public.api_specs
@@ -243,6 +255,7 @@ export async function saveApiSpec(
           title,
           version,
           spec_type,
+          content_json,
           raw_spec,
           created_at,
           updated_at
@@ -253,7 +266,8 @@ export async function saveApiSpec(
           ${String(projectId)},
           ${title},
           ${version || '1.0.0'},
-          ${format === 'yaml' ? 'openapi' : 'openapi'},
+          'openapi',
+          ${JSON.stringify(contentJson)},
           ${rawSpec},
           NOW(),
           NOW()
@@ -263,20 +277,26 @@ export async function saveApiSpec(
         project_id AS "projectId",
         title,
         version,
+        spec_type AS "specType",
+        content_json AS "contentJson",
         raw_spec AS "rawSpec",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
     `);
 
+    const row = result.rows[0];
+
     return {
-      ...result.rows[0],
+      ...row,
       description: description || null,
       baseUrl: baseUrl || null,
       format
     };
   } catch (error) {
     console.error('Error in saveApiSpec:', error);
-    throw new Error('Failed to save API specification', { cause: error });
+    throw new Error('Failed to save API specification', {
+      cause: error
+    });
   }
 }
 
@@ -288,6 +308,8 @@ export async function getLatestApiSpec(projectId: string | number) {
         project_id AS "projectId",
         title,
         version,
+        spec_type AS "specType",
+        content_json AS "contentJson",
         raw_spec AS "rawSpec",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
