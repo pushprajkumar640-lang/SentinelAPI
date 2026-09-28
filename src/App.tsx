@@ -291,8 +291,13 @@ export default function App() {
         handleSelectProject(demoProj);
       }
     } catch (err) {
-      console.error('Error setting up demo sandbox:', err);
-    }
+  console.error('Error setting up demo sandbox:', err);
+  alert(
+    err instanceof Error
+      ? err.message
+      : 'Demo Sandbox start nahi ho saka.'
+  );
+}
   };
 
   // Delete project
@@ -302,10 +307,15 @@ export default function App() {
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      await apiFetch(`/api/projects/${projectId}`, {
-        method: 'DELETE',
-        headers
-      }).catch(() => {});
+      const res = await apiFetch(`/api/projects/${projectId}`, {
+  method: 'DELETE',
+  headers
+});
+
+if (!res.ok) {
+  const data = await res.json().catch(() => ({}));
+  throw new Error(data.error || 'Project delete nahi hua');
+}
 
       setProjects((prev) => prev.filter((p) => String(p.id) !== String(projectId)));
       if (String(activeProject?.id) === String(projectId)) {

@@ -1,4 +1,7 @@
-export const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+export const API_URL = (
+  import.meta.env.VITE_API_URL ||
+  'https://sentinel-api-okcg.onrender.com'
+).replace(/\/$/, '');
 
 export async function apiFetch(path: string, options: RequestInit = {}) {
   const headers = new Headers(options.headers);
